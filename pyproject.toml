@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "analysis-agent"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=0.3",
+    "langchain-community>=0.3",
+    "langchain-ollama>=0.2",
+    "langgraph>=0.2",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "typer>=0.12",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+analyze = "analysis_agent.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]

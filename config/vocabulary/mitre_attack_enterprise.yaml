@@ -1,0 +1,309 @@
+# MITRE ATT&CK Enterprise - Tactics and Techniques
+# Source: https://attack.mitre.org/ (v15)
+
+tactics:
+  - id: TA0001
+    name: Initial Access
+    description: Techniques to gain an initial foothold within a network
+  - id: TA0002
+    name: Execution
+    description: Techniques that run adversary-controlled code on a local or remote system
+  - id: TA0003
+    name: Persistence
+    description: Techniques to maintain foothold across system restarts, credential changes, and other interruptions
+  - id: TA0004
+    name: Privilege Escalation
+    description: Techniques to gain higher-level permissions on a system or network
+  - id: TA0005
+    name: Defense Evasion
+    description: Techniques to avoid detection throughout the compromise
+  - id: TA0006
+    name: Credential Access
+    description: Techniques for stealing credentials like account names and passwords
+  - id: TA0007
+    name: Discovery
+    description: Techniques to gain knowledge about the system and internal network
+  - id: TA0008
+    name: Lateral Movement
+    description: Techniques to enter and control remote systems on a network
+  - id: TA0009
+    name: Collection
+    description: Techniques to gather information relevant to the adversary's goal
+  - id: TA0010
+    name: Exfiltration
+    description: Techniques to steal data from a network
+  - id: TA0011
+    name: Command and Control
+    description: Techniques to communicate with compromised systems to control them
+  - id: TA0040
+    name: Impact
+    description: Techniques to disrupt availability or compromise integrity by manipulating business and operational processes
+  - id: TA0042
+    name: Resource Development
+    description: Techniques to establish resources to support operations
+  - id: TA0043
+    name: Reconnaissance
+    description: Techniques to gather information before compromising a target
+
+techniques:
+  # Initial Access
+  - id: T1566
+    name: Phishing
+    tactic: TA0001
+  - id: T1190
+    name: Exploit Public-Facing Application
+    tactic: TA0001
+  - id: T1133
+    name: External Remote Services
+    tactic: TA0001
+  - id: T1195
+    name: Supply Chain Compromise
+    tactic: TA0001
+
+  # Execution
+  - id: T1059
+    name: Command and Scripting Interpreter
+    tactic: TA0002
+  - id: T1053
+    name: Scheduled Task/Job
+    tactic: TA0002
+  - id: T1106
+    name: Native API
+    tactic: TA0002
+  - id: T1129
+    name: Shared Modules
+    tactic: TA0002
+  - id: T1204
+    name: User Execution
+    tactic: TA0002
+  - id: T1047
+    name: Windows Management Instrumentation
+    tactic: TA0002
+
+  # Persistence
+  - id: T1547
+    name: Boot or Logon Autostart Execution
+    tactic: TA0003
+  - id: T1543
+    name: Create or Modify System Process
+    tactic: TA0003
+  - id: T1136
+    name: Create Account
+    tactic: TA0003
+  - id: T1505
+    name: Server Software Component
+    tactic: TA0003
+  - id: T1574
+    name: Hijack Execution Flow
+    tactic: TA0003
+
+  # Privilege Escalation
+  - id: T1055
+    name: Process Injection
+    tactic: TA0004
+  - id: T1548
+    name: Abuse Elevation Control Mechanism
+    tactic: TA0004
+  - id: T1134
+    name: Access Token Manipulation
+    tactic: TA0004
+  - id: T1068
+    name: Exploitation for Privilege Escalation
+    tactic: TA0004
+
+  # Defense Evasion
+  - id: T1027
+    name: Obfuscated Files or Information
+    tactic: TA0005
+  - id: T1070
+    name: Indicator Removal
+    tactic: TA0005
+  - id: T1036
+    name: Masquerading
+    tactic: TA0005
+  - id: T1562
+    name: Impair Defenses
+    tactic: TA0005
+  - id: T1140
+    name: Deobfuscate/Decode Files or Information
+    tactic: TA0005
+  - id: T1112
+    name: Modify Registry
+    tactic: TA0005
+  - id: T1564
+    name: Hide Artifacts
+    tactic: TA0005
+  - id: T1497
+    name: Virtualization/Sandbox Evasion
+    tactic: TA0005
+  - id: T1620
+    name: Reflective Code Loading
+    tactic: TA0005
+
+  # Credential Access
+  - id: T1110
+    name: Brute Force
+    tactic: TA0006
+  - id: T1003
+    name: OS Credential Dumping
+    tactic: TA0006
+  - id: T1555
+    name: Credentials from Password Stores
+    tactic: TA0006
+  - id: T1558
+    name: Steal or Forge Kerberos Tickets
+    tactic: TA0006
+  - id: T1539
+    name: Steal Web Session Cookie
+    tactic: TA0006
+  - id: T1056
+    name: Input Capture
+    tactic: TA0006
+
+  # Discovery
+  - id: T1082
+    name: System Information Discovery
+    tactic: TA0007
+  - id: T1083
+    name: File and Directory Discovery
+    tactic: TA0007
+  - id: T1057
+    name: Process Discovery
+    tactic: TA0007
+  - id: T1049
+    name: System Network Connections Discovery
+    tactic: TA0007
+  - id: T1018
+    name: Remote System Discovery
+    tactic: TA0007
+  - id: T1016
+    name: System Network Configuration Discovery
+    tactic: TA0007
+  - id: T1087
+    name: Account Discovery
+    tactic: TA0007
+  - id: T1069
+    name: Permission Groups Discovery
+    tactic: TA0007
+  - id: T1046
+    name: Network Service Discovery
+    tactic: TA0007
+  - id: T1135
+    name: Network Share Discovery
+    tactic: TA0007
+
+  # Lateral Movement
+  - id: T1021
+    name: Remote Services
+    tactic: TA0008
+  - id: T1550
+    name: Use Alternate Authentication Material
+    tactic: TA0008
+  - id: T1534
+    name: Internal Spearphishing
+    tactic: TA0008
+
+  # Collection
+  - id: T1005
+    name: Data from Local System
+    tactic: TA0009
+  - id: T1039
+    name: Data from Network Shared Drive
+    tactic: TA0009
+  - id: T1113
+    name: Screen Capture
+    tactic: TA0009
+  - id: T1125
+    name: Video Capture
+    tactic: TA0009
+  - id: T1123
+    name: Audio Capture
+    tactic: TA0009
+  - id: T1560
+    name: Archive Collected Data
+    tactic: TA0009
+  - id: T1074
+    name: Data Staged
+    tactic: TA0009
+
+  # Exfiltration
+  - id: T1041
+    name: Exfiltration Over C2 Channel
+    tactic: TA0010
+  - id: T1048
+    name: Exfiltration Over Alternative Protocol
+    tactic: TA0010
+  - id: T1567
+    name: Exfiltration Over Web Service
+    tactic: TA0010
+
+  # Command and Control
+  - id: T1071
+    name: Application Layer Protocol
+    tactic: TA0011
+  - id: T1095
+    name: Non-Application Layer Protocol
+    tactic: TA0011
+  - id: T1573
+    name: Encrypted Channel
+    tactic: TA0011
+  - id: T1090
+    name: Proxy
+    tactic: TA0011
+  - id: T1105
+    name: Ingress Tool Transfer
+    tactic: TA0011
+  - id: T1132
+    name: Data Encoding
+    tactic: TA0011
+  - id: T1001
+    name: Data Obfuscation
+    tactic: TA0011
+  - id: T1008
+    name: Fallback Channels
+    tactic: TA0011
+  - id: T1219
+    name: Remote Access Software
+    tactic: TA0011
+
+  # Impact
+  - id: T1485
+    name: Data Destruction
+    tactic: TA0040
+  - id: T1486
+    name: Data Encrypted for Impact
+    tactic: TA0040
+  - id: T1489
+    name: Service Stop
+    tactic: TA0040
+  - id: T1498
+    name: Network Denial of Service
+    tactic: TA0040
+  - id: T1565
+    name: Data Manipulation
+    tactic: TA0040
+
+  # Resource Development
+  - id: T1587
+    name: Develop Capabilities
+    tactic: TA0042
+  - id: T1588
+    name: Obtain Capabilities
+    tactic: TA0042
+  - id: T1583
+    name: Acquire Infrastructure
+    tactic: TA0042
+
+  # Reconnaissance
+  - id: T1595
+    name: Active Scanning
+    tactic: TA0043
+  - id: T1592
+    name: Gather Victim Host Information
+    tactic: TA0043
+  - id: T1589
+    name: Gather Victim Identity Information
+    tactic: TA0043
+  - id: T1590
+    name: Gather Victim Network Information
+    tactic: TA0043

@@ -1,0 +1,34 @@
+# Custom vocabulary extension
+# Add domain-specific tags beyond MITRE ATT&CK here
+
+custom_tags:
+  - name: C2 Framework
+    description: Command and Control framework (e.g., Cobalt Strike, Sliver, Havoc)
+  - name: Payload Delivery
+    description: Tool focused on delivering payloads to target systems
+  - name: Post-Exploitation
+    description: Tool used after initial access for further exploitation
+  - name: Implant
+    description: Malware/agent installed on a compromised host
+  - name: Loader
+    description: Shellcode or PE loader
+  - name: Injector
+    description: Process/code injection utility
+  - name: Dropper
+    description: Delivers and executes another payload
+  - name: Keylogger
+    description: Captures keystrokes
+  - name: Ransomware
+    description: Encrypts files for extortion
+  - name: Rootkit
+    description: Hides presence on a system at kernel or user level
+  - name: BOF
+    description: Beacon Object File (Cobalt Strike extension)
+  - name: OPSEC
+    description: Operational security tool or technique
+  - name: Recon Tool
+    description: Reconnaissance and information gathering utility
+  - name: Lateral Movement Tool
+    description: Tool assisting with lateral movement between hosts
+  - name: Credential Harvester
+    description: Extracts credentials from memory, disk, or network
