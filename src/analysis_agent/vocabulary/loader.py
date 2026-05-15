@@ -25,17 +25,16 @@ def load_vocabulary(custom_path: str | None = None) -> dict:
 
 
 def format_vocabulary_context(vocab: dict) -> str:
-    """Format vocabulary into a compact string for LLM system prompt injection."""
-    lines = ["=== MITRE ATT&CK Enterprise Tactics ==="]
-    for t in vocab["tactics"]:
-        lines.append(f"  {t['id']} - {t['name']}: {t['description']}")
+    """Format vocabulary into a compact string for LLM prompt injection.
 
-    lines.append("\n=== MITRE ATT&CK Enterprise Techniques (subset) ===")
-    for t in vocab["techniques"]:
-        lines.append(f"  {t['id']} - {t['name']} (tactic: {t['tactic']})")
+    Kept intentionally short so small models (≤20B) don't get overloaded.
+    """
+    tactic_lines = ", ".join(f"{t['id']}({t['name']})" for t in vocab["tactics"])
+    technique_lines = ", ".join(f"{t['id']}({t['name']})" for t in vocab["techniques"])
+    custom_lines = ", ".join(tag["name"] for tag in vocab["custom_tags"])
 
-    lines.append("\n=== Custom Tags ===")
-    for tag in vocab["custom_tags"]:
-        lines.append(f"  {tag['name']}: {tag['description']}")
-
-    return "\n".join(lines)
+    return (
+        f"MITRE ATT&CK Tactics: {tactic_lines}\n"
+        f"MITRE ATT&CK Techniques: {technique_lines}\n"
+        f"Custom Tags: {custom_lines}"
+    )

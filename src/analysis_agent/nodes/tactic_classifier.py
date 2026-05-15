@@ -6,38 +6,32 @@ from langchain_ollama import ChatOllama
 from analysis_agent.state import AnalysisState
 from analysis_agent.tools.filesystem import grep_content, read_file
 
-_SYSTEM_PROMPT_TEMPLATE = """You are a cybersecurity analyst specializing in offensive security tools and red teaming.
+_SYSTEM_PROMPT_TEMPLATE = """You are a cybersecurity analyst. Analyze the provided source code project and classify it.
 
-Classify the given source code project against the following vocabulary.
-
+Available vocabulary (use ONLY these IDs/names):
 {vocabulary_context}
 
-Based on the code context provided, identify:
-1. Which MITRE ATT&CK tactics (TA####) apply
-2. Which MITRE ATT&CK techniques (T####) apply
-3. Which custom tags apply
-
-Return ONLY valid JSON in this exact format (no markdown fences):
+Return ONLY valid JSON (no markdown fences, no extra keys):
 {{
-  "mitre_tactics": ["TA0002", "TA0005"],
-  "mitre_techniques": ["T1059", "T1055"],
-  "custom_tags": ["C2 Framework", "Implant"],
-  "reasoning": "One sentence summary of what this tool does"
+  "mitre_tactics": ["TA0002", "TA0011"],
+  "mitre_techniques": ["T1059", "T1056"],
+  "custom_tags": ["C2 Framework", "Keylogger"],
+  "reasoning": "One sentence describing what this tool does"
 }}
 
-Rules:
-- Only include IDs/names that appear in the vocabulary above
-- Be precise — only include tactics/techniques clearly evidenced by the code
-- mitre_techniques: list specific sub-techniques if applicable (e.g. T1059.001 for PowerShell)
-- custom_tags: use exact names from the custom vocabulary"""
+Classification rules:
+- Include a tactic if the project clearly implements functionality belonging to it
+- Include a technique if specific code evidence exists (function names, API calls, file names)
+- custom_tags: pick from the Custom Tags list only; use exact names
+- If no match exists, return empty arrays — do NOT fabricate IDs"""
 
 
 def _collect_classification_context(repo_path: str, key_files: dict[str, str], readme: str) -> str:
     sections: list[str] = []
 
-    # README is highest signal
+    # README is highest signal — use up to 6KB
     if readme:
-        sections.append(f"=== README ===\n{readme[:4096]}")
+        sections.append(f"=== README ===\n{readme[:6144]}")
 
     # Jenkinsfile or CI hints
     for role in ("jenkinsfile",):
@@ -46,14 +40,24 @@ def _collect_classification_context(repo_path: str, key_files: dict[str, str], r
             if content:
                 sections.append(f"=== {key_files[role]} ===\n{content}")
 
-    # Grep for C2 / network / injection patterns
+    # Grep for C2 / network / injection / persistence / evasion patterns
     signal_patterns = [
-        (r"(?:socket|connect|recv|send|WSAStartup|WinHttp)", [".c", ".cpp", ".h", ".cs", ".go", ".rs"]),
-        (r"(?:VirtualAlloc|CreateRemoteThread|WriteProcessMemory|NtCreateThread)", [".c", ".cpp", ".h", ".cs"]),
-        (r"(?:shellcode|payload|implant|beacon|agent|c2|c&c|command.and.control)", [".c", ".cpp", ".h", ".cs", ".go", ".rs", ".py"]),
-        (r"(?:inject|hook|patch|bypass|evade|obfuscat)", [".c", ".cpp", ".h", ".cs", ".go", ".rs"]),
-        (r"(?:keylog|screenshot|screencap|clipboard)", [".c", ".cpp", ".h", ".cs"]),
-        (r"(?:lsass|mimikatz|credential|password|hash|token)", [".c", ".cpp", ".h", ".cs"]),
+        # Network / C2
+        (r"(?:WSAStartup|WSASocket|socket\s*\(|connect\s*\(|recv\s*\(|send\s*\(|WinHttp|HttpSend|URLDownload)", [".c", ".cpp", ".h", ".cs", ".go", ".rs"]),
+        # Process injection / code execution
+        (r"(?:VirtualAlloc|VirtualAllocEx|CreateRemoteThread|WriteProcessMemory|NtCreateThread|RtlCreateUserThread|NtUnmapView)", [".c", ".cpp", ".h", ".cs"]),
+        # Keylogger / input capture
+        (r"(?:SetWindowsHookEx|GetAsyncKeyState|GetKeyState|keylog|KeyLogger|WH_KEYBOARD)", [".c", ".cpp", ".h", ".cs"]),
+        # Persistence
+        (r"(?:RegSetValueEx|HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run|StartupFolder|Startup)", [".c", ".cpp", ".h", ".cs"]),
+        # Defense evasion
+        (r"(?:inject|hook|patch|bypass|evade|obfuscat|IsDebuggerPresent|CheckRemoteDebugger)", [".c", ".cpp", ".h", ".cs", ".go", ".rs"]),
+        # Credential / privilege
+        (r"(?:lsass|mimikatz|credential|password|hash|token|privilege|SeDebug)", [".c", ".cpp", ".h", ".cs"]),
+        # Execution via scripting
+        (r"(?:PowerShell|WScript|ShellExecute|CreateProcess|cmd\.exe|WMI|IWbem)", [".c", ".cpp", ".h", ".cs"]),
+        # Generic red team keywords in any text file
+        (r"(?:shellcode|payload|implant|beacon|agent|c2\b|RAT\b|backdoor|rootkit)", [".c", ".cpp", ".h", ".cs", ".go", ".rs", ".py", ".md", ".txt"]),
     ]
 
     all_hits: list[str] = []
