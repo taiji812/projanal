@@ -1,4 +1,10 @@
-"""BuildAnalyzer node — uses LLM to extract build tool, commands, env, and parameters."""
+"""BuildAnalyzer node — extracts build tool, commands, environment, and parameters.
+
+Context source (in priority order):
+  1. RAG retrieval from ChromaDB (populated by index_builder)
+  2. Fallback: direct file reads (old behaviour, used if index not available)
+"""
+
 import json
 import re
 from typing import Any
@@ -11,11 +17,11 @@ from analysis_agent.tools.filesystem import find_files_by_extension, grep_conten
 
 _MACRO_PATTERN = re.compile(
     r"""(?:
-        \-D([A-Z_][A-Z0-9_]*)          # gcc/clang -DFOO
-        |/D([A-Z_][A-Z0-9_]*)          # MSVC /DFOO
-        |\$\(([A-Z_][A-Z0-9_]*)\)      # Makefile $(VAR)
-        |ifdef\s+([A-Z_][A-Z0-9_]*)    # C preprocessor ifdef
-        |if\s+defined\(([A-Z_][A-Z0-9_]*)\)  # #if defined(FOO)
+        \-D([A-Z_][A-Z0-9_]*)
+        |/D([A-Z_][A-Z0-9_]*)
+        |\$\(([A-Z_][A-Z0-9_]*)\)
+        |ifdef\s+([A-Z_][A-Z0-9_]*)
+        |if\s+defined\(([A-Z_][A-Z0-9_]*)\)
     )""",
     re.VERBOSE | re.IGNORECASE,
 )
@@ -31,103 +37,117 @@ class _BuildParameter(BaseModel):
 
 
 class _BuildInfoOutput(BaseModel):
-    tool: str = Field(description="Primary build tool: CMake | Make | MSBuild | Gradle | Maven | Cargo | go | shell | unknown")
-    tool_path: str = Field(default="", description="Executable path if specific, e.g. MSBuild.exe")
-    commands: list[str] = Field(description="Ordered list of build commands to compile the project")
-    environment: str = Field(description="Build OS: windows | linux | cross | unknown")
+    tool: str = Field(description="CMake | Make | MSBuild | Gradle | Maven | Cargo | go | shell | docker | unknown")
+    tool_path: str = Field(default="")
+    commands: list[str] = Field(description="Ordered build commands")
+    environment: str = Field(description="windows | linux | cross | unknown")
     parameters: list[_BuildParameter] = Field(default_factory=list)
-    notes: str = Field(default="", description="Any additional observations about the build process")
+    notes: str = Field(default="")
 
 
-def _collect_build_context(repo_path: str, key_files: dict[str, str]) -> str:
-    """Gather relevant build files and macro hints into a single context string."""
+# ---------------------------------------------------------------------------
+# RAG retrieval (primary path)
+# ---------------------------------------------------------------------------
+
+_BUILD_QUERIES = [
+    "build tool cmake msbuild makefile gradle maven cargo docker",
+    "compile command executable output binary script",
+    "build configuration debug release platform architecture",
+    "build parameter macro define variable argument flag",
+    "OutputPath AssemblyName OutputType add_executable target_link_libraries",
+]
+
+
+def _rag_context(project_id: str) -> str:
+    from analysis_agent.indexer.store import get_project_collection, retrieve_multi
+    col = get_project_collection(project_id)
+    if col is None or col.count() == 0:
+        return ""
+    return retrieve_multi(project_id, _BUILD_QUERIES, n_per_query=5)
+
+
+# ---------------------------------------------------------------------------
+# Fallback: direct file reads (used when index not available)
+# ---------------------------------------------------------------------------
+
+def _fallback_context(repo_path: str, key_files: dict[str, str]) -> str:
     sections: list[str] = []
-
-    # Read identified build files
-    priority_roles = ["cmake", "cmake_presets", "makefile", "gradle", "maven",
-                      "cargo", "gomod", "meson", "npm", "vs_solution", "vs_vcxproj",
-                      "vs_csproj", "build_doc", "readme", "jenkinsfile"]
+    priority_roles = [
+        "cmake", "cmake_presets", "makefile", "gradle", "maven",
+        "cargo", "gomod", "meson", "npm", "vs_vcxproj",
+        "vs_csproj", "build_doc", "readme", "jenkinsfile",
+    ]
     for role in priority_roles:
         if role in key_files:
-            content = read_file(repo_path, key_files[role], max_bytes=6144)
+            content = read_file(repo_path, key_files[role], max_bytes=3072)
             if content:
                 sections.append(f"=== {key_files[role]} ===\n{content}")
 
-    # Detect shell/batch build scripts
-    script_files = find_files_by_extension(repo_path, [".sh", ".bat", ".cmd", ".ps1"])
-    for sf in script_files[:5]:
+    # Shell/batch scripts containing build keywords
+    for sf in find_files_by_extension(repo_path, [".sh", ".bat", ".cmd", ".ps1"])[:5]:
         content = read_file(repo_path, sf, max_bytes=2048)
-        if content and any(kw in content.lower() for kw in ["cmake", "make", "msbuild", "gcc", "g++", "cl ", "build"]):
+        if content and any(kw in content.lower() for kw in ["cmake", "make", "msbuild", "gcc", "build"]):
             sections.append(f"=== {sf} ===\n{content}")
 
-    # Grep macro defines from C/C++/C# sources
+    # Preprocessor macros
     macro_hits = grep_content(
         repo_path,
         r"#\s*(?:ifdef|if\s+defined)\s*\(?\s*([A-Z_][A-Z0-9_]*)",
         extensions=[".c", ".cpp", ".h", ".hpp", ".cs"],
-        max_matches=30,
-    )
-    if macro_hits:
-        macro_lines = "\n".join(f"  {h['file']}:{h['line']}: {h['text']}" for h in macro_hits)
-        sections.append(f"=== Preprocessor Macros (conditional compilation) ===\n{macro_lines}")
-
-    # Grep -D flags in CMakeLists or scripts
-    define_hits = grep_content(
-        repo_path,
-        r'(?:-D|-DCMAKE_)[A-Z_][A-Z0-9_]*',
-        extensions=[".cmake", ".txt", ".sh", ".bat", ".cmd"],
         max_matches=20,
     )
-    if define_hits:
-        define_lines = "\n".join(f"  {h['file']}:{h['line']}: {h['text']}" for h in define_hits)
-        sections.append(f"=== Compile Definitions (-D flags) ===\n{define_lines}")
+    if macro_hits:
+        lines = "\n".join(f"  {h['file']}:{h['line']}: {h['text']}" for h in macro_hits)
+        sections.append(f"=== Preprocessor Macros ===\n{lines}")
 
     return "\n\n".join(sections)
 
 
-_SYSTEM_PROMPT = """You are a build system expert. Analyze the provided build files and source code snippets.
-Extract the following information and return it as valid JSON matching the schema.
+# ---------------------------------------------------------------------------
+# LLM prompt
+# ---------------------------------------------------------------------------
 
-Schema:
+_SYSTEM_PROMPT = """You are a build system expert. Analyze the provided build context and return JSON:
 {
-  "tool": "<CMake|Make|MSBuild|Gradle|Maven|Cargo|go|shell|unknown>",
-  "tool_path": "<executable path or empty string>",
-  "commands": ["<step1>", "<step2>", ...],
+  "tool": "<CMake|Make|MSBuild|Gradle|Maven|Cargo|go|shell|docker|unknown>",
+  "tool_path": "<executable path or empty>",
+  "commands": ["<step1>", "<step2>"],
   "environment": "<windows|linux|cross|unknown>",
   "parameters": [
     {
-      "name": "<PARAM_NAME>",
+      "name": "<PARAM>",
       "type": "<string|boolean|choice|text>",
-      "default": "<default value or empty>",
+      "default": "<value>",
       "choices": [],
       "description": "<what it controls>",
-      "source": "<where found: cmake|makefile|source_code|readme>"
+      "source": "<cmake|makefile|source_code|readme|csproj>"
     }
   ],
-  "notes": "<any important build notes>"
+  "notes": "<additional build notes>"
 }
 
 Rules:
-- commands: provide the exact shell commands needed to build (e.g. "mkdir build && cd build && cmake .. && make")
-- parameters: include only build-time variables that a user would pass (e.g. CMAKE_BUILD_TYPE, target platform macros)
-- environment: infer from MSVC/MSBuild/bat → windows; gcc/make/sh → linux; if both exist → cross
-- Return ONLY valid JSON, no markdown fences, no extra text."""
+- commands: exact shell commands needed to build the project
+- parameters: only build-time variables a user would pass (e.g. CMAKE_BUILD_TYPE, Configuration)
+- environment: MSVC/MSBuild/bat → windows; gcc/make/sh → linux; both → cross
+- Return ONLY valid JSON, no markdown fences."""
 
+
+# ---------------------------------------------------------------------------
+# Node
+# ---------------------------------------------------------------------------
 
 def build_analyzer_node(state: AnalysisState) -> dict:
-    repo_path = state["repo_path"]
-    key_files = state.get("key_files", {})
+    repo_path  = state["repo_path"]
+    project_id = state["project_id"]
+    key_files  = state.get("key_files", {})
 
-    context = _collect_build_context(repo_path, key_files)
+    context = _rag_context(project_id) or _fallback_context(repo_path, key_files)
+
     if not context.strip():
-        return {
-            "build_info": None,
-            "completed_nodes": ["build_analyzer"],
-            "errors": [],
-        }
+        return {"build_info": None, "completed_nodes": ["build_analyzer"], "errors": []}
 
     llm = ChatOllama(model="gpt-oss:20b", temperature=0, format="json")
-
     messages = [
         ("system", _SYSTEM_PROMPT),
         ("human", f"Build context:\n\n{context}"),
@@ -136,17 +156,13 @@ def build_analyzer_node(state: AnalysisState) -> dict:
     try:
         response = llm.invoke(messages)
         raw = response.content.strip()
+        if not raw:
+            raise ValueError("LLM returned empty response")
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
         data: dict[str, Any] = json.loads(raw)
         build_info = _BuildInfoOutput(**data).model_dump()
     except Exception as e:
-        return {
-            "build_info": None,
-            "completed_nodes": ["build_analyzer"],
-            "errors": [f"build_analyzer: {e}"],
-        }
+        return {"build_info": None, "completed_nodes": ["build_analyzer"], "errors": [f"build_analyzer: {e}"]}
 
-    return {
-        "build_info": build_info,
-        "completed_nodes": ["build_analyzer"],
-        "errors": [],
-    }
+    return {"build_info": build_info, "completed_nodes": ["build_analyzer"], "errors": []}

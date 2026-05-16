@@ -18,6 +18,18 @@ dependencies = [
     "pyyaml>=6.0",
     "python-multipart>=0.0.9",
     "httpx>=0.27",
+    "tree-sitter>=0.25",
+    "tree-sitter-c-sharp",
+    "tree-sitter-cpp",
+    "tree-sitter-c",
+    "tree-sitter-go",
+    "tree-sitter-rust",
+    "tree-sitter-java",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-bash",
+    "chromadb>=0.5",
 ]
 
 [project.scripts]
