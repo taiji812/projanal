@@ -26,37 +26,95 @@ pip install -e .
 
 ## Usage
 
-### Script (가장 간단)
+> **의존성은 Docker 이미지 안에만 설치되어 있습니다.** 로컬 Python 환경 없이 아래 Docker 방법으로 테스트하세요.
+
+### 0. 이미지 빌드 (코드 변경 후 1회)
 
 ```bash
-# 프로젝트 ID는 폴더명으로 자동 설정
-python run_analysis.py /path/to/project
-
-# ID 직접 지정
-python run_analysis.py /path/to/project --id my-project
+docker build -t analysis-agent .
 ```
 
-결과는 `out/<project_id>.json`에 저장되고 터미널에 요약이 출력됩니다.
+---
 
-### CLI
+### 방법 1 — CLI (가장 간단, 일회성 테스트)
+
+분석할 폴더를 컨테이너에 마운트하고 `analyze` CLI를 직접 실행합니다.
 
 ```bash
-analyze /path/to/project --id my-project --output result.json
+# 결과를 터미널에 출력 (JSON)
+docker run --rm \
+  -v /path/to/project:/workspace \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  --entrypoint analyze \
+  analysis-agent /workspace --id my-project
+
+# 결과를 로컬 out/ 디렉토리에 파일로 저장
+mkdir -p out
+docker run --rm \
+  -v /path/to/project:/workspace \
+  -v $(pwd)/out:/out \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  --entrypoint analyze \
+  analysis-agent /workspace --id my-project --output /out/my-project.json
 ```
 
-### REST API
+---
+
+### 방법 2 — REST API · 볼륨 마운트 (반복 테스트에 유리)
+
+서버를 한 번 띄우고 `curl`로 여러 프로젝트를 순서대로 분석합니다.
+
+**서버 시작**
 
 ```bash
-python -m analysis_agent.api.routes
+docker run -d --name analysis-api \
+  -p 8080:8080 \
+  -v /path/to/projects:/projects \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  analysis-agent
 ```
 
-| Endpoint | Description |
-|---|---|
-| `POST /analyze/path` | Analyze a path on the server filesystem |
-| `POST /analyze/upload` | Upload and analyze a zip archive |
-| `GET /analyze/{job_id}` | Poll analysis job status |
+**분석 요청 (동기 응답, 1–3분 소요)**
 
-### Python
+```bash
+curl -s -X POST http://localhost:8080/analyze/path \
+  -H "Content-Type: application/json" \
+  -d '{"repo_path": "/projects/MyProject", "project_id": "my-project"}' \
+  | python3 -m json.tool
+```
+
+**서버 종료**
+
+```bash
+docker stop analysis-api && docker rm analysis-api
+```
+
+---
+
+### 방법 3 — REST API · zip 업로드 (볼륨 마운트 없이)
+
+```bash
+# 서버 시작 (볼륨 불필요)
+docker run -d --name analysis-api \
+  -p 8080:8080 \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  analysis-agent
+
+# 프로젝트 압축 후 업로드 (비동기, job_id 반환)
+zip -r my-project.zip /path/to/project
+curl -s -X POST http://localhost:8080/analyze/upload \
+  -F "file=@my-project.zip"
+# → {"job_id": "xxxxxxxx-...", "status": "accepted"}
+
+# 결과 폴링 (completed 될 때까지 반복)
+curl -s http://localhost:8080/analyze/<job_id> | python3 -m json.tool
+
+docker stop analysis-api && docker rm analysis-api
+```
+
+---
+
+### Python (의존성 설치된 환경)
 
 ```python
 from analysis_agent.runner import run_analysis
