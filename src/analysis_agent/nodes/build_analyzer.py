@@ -6,6 +6,7 @@ Context source (in priority order):
 """
 
 import json
+import os
 import re
 from typing import Any
 
@@ -147,7 +148,14 @@ def build_analyzer_node(state: AnalysisState) -> dict:
     if not context.strip():
         return {"build_info": None, "completed_nodes": ["build_analyzer"], "errors": []}
 
-    llm = ChatOllama(model="gpt-oss:20b", temperature=0, format="json")
+    llm = ChatOllama(
+        model="gpt-oss:20b",
+        temperature=0,
+        format="json",
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        num_predict=4096,
+        num_ctx=32768,
+    )
     messages = [
         ("system", _SYSTEM_PROMPT),
         ("human", f"Build context:\n\n{context}"),

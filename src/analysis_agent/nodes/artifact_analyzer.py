@@ -6,6 +6,7 @@ Context source (in priority order):
 """
 
 import json
+import os
 
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field, model_validator
@@ -158,7 +159,14 @@ def artifact_analyzer_node(state: AnalysisState) -> dict:
     if not context.strip():
         return {"artifacts": [], "completed_nodes": ["artifact_analyzer"], "errors": []}
 
-    llm = ChatOllama(model="gpt-oss:20b", temperature=0, format="json")
+    llm = ChatOllama(
+        model="gpt-oss:20b",
+        temperature=0,
+        format="json",
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        num_predict=4096,
+        num_ctx=32768,
+    )
     messages = [
         ("system", _SYSTEM_PROMPT),
         ("human", f"Build configuration:\n\n{context}"),

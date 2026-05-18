@@ -6,6 +6,7 @@ Context source (in priority order):
 """
 
 import json
+import os
 import re
 
 from langchain_ollama import ChatOllama
@@ -221,7 +222,14 @@ def tactic_classifier_node(state: AnalysisState) -> dict:
         }
 
     system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(vocabulary_context=vocabulary_context)
-    llm = ChatOllama(model="gpt-oss:20b", temperature=0, format="json")
+    llm = ChatOllama(
+        model="gpt-oss:20b",
+        temperature=0,
+        format="json",
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        num_predict=4096,
+        num_ctx=32768,
+    )
     messages = [
         ("system", system_prompt),
         ("human", f"Project context:\n\n{context}"),
