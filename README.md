@@ -171,6 +171,47 @@ Set the `OLLAMA_BASE_URL` environment variable (default: `http://localhost:11434
 export OLLAMA_BASE_URL=http://ollama-service:11434
 ```
 
+### Colima 환경 (macOS)
+
+Docker Desktop과 달리 Colima은 `host.docker.internal`을 자동으로 지원하지 않습니다.
+컨테이너에서 호스트의 Ollama에 접근하려면 아래 두 가지 설정이 필요합니다.
+
+**1. Ollama를 모든 인터페이스에 바인딩**
+
+Ollama 기본값은 `127.0.0.1`만 수신합니다. Colima VM에서 접근하려면 `0.0.0.0`으로 재시작해야 합니다.
+
+```bash
+# Ollama.app 종료 후 터미널에서 실행
+pkill ollama
+OLLAMA_HOST=0.0.0.0 ollama serve &
+
+# 바인딩 확인 — *.11434 항목이 보여야 함
+netstat -an | grep 11434
+```
+
+**2. Colima 게이트웨이 IP 확인**
+
+```bash
+# Colima VM 내부에서 호스트 IP 확인
+colima ssh -- ip route | grep default
+# 예: default via 192.168.5.2 dev eth0 ...
+#                 ^^^^^^^^^^^^^ 이 IP를 OLLAMA_BASE_URL에 사용
+```
+
+**3. docker run 명령에 적용**
+
+```bash
+docker run --rm \
+  -v /path/to/project:/workspace \
+  -v $(pwd)/out:/out \
+  -v chroma-model-cache:/root/.cache/chroma \
+  -e OLLAMA_BASE_URL=http://192.168.5.2:11434 \
+  --entrypoint analyze \
+  analysis-agent /workspace --id my-project --output /out/my-project.json
+```
+
+> `-v chroma-model-cache:/root/.cache/chroma` 는 임베딩 모델(~80MB)을 Docker 볼륨에 캐시해 재실행 시 다운로드를 건너뜁니다.
+
 ### Vocabulary
 
 - `config/vocabulary/mitre_attack_enterprise.yaml` — MITRE ATT&CK Enterprise v15 tactics and techniques
