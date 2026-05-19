@@ -142,7 +142,9 @@ Rules:
 - output_path: use exact OutputPath value; empty string if not found
 - List Debug and Release as SEPARATE artifacts only if OutputPath differs
 - Do NOT invent filenames not found in the config
-- Return ONLY valid JSON, no markdown fences."""
+- Return ONLY valid JSON, no markdown fences.
+
+/no_think"""
 
 
 # ---------------------------------------------------------------------------
@@ -160,12 +162,12 @@ def artifact_analyzer_node(state: AnalysisState) -> dict:
         return {"artifacts": [], "completed_nodes": ["artifact_analyzer"], "errors": []}
 
     llm = ChatOllama(
-        model="gpt-oss:20b",
+        model=os.getenv("OLLAMA_MODEL", "gpt-oss:20b"),
         temperature=0,
         format="json",
         base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         num_predict=4096,
-        num_ctx=32768,
+        num_ctx=8192,
     )
     messages = [
         ("system", _SYSTEM_PROMPT),

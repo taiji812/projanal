@@ -131,7 +131,9 @@ Rules:
 - commands: exact shell commands needed to build the project
 - parameters: only build-time variables a user would pass (e.g. CMAKE_BUILD_TYPE, Configuration)
 - environment: MSVC/MSBuild/bat → windows; gcc/make/sh → linux; both → cross
-- Return ONLY valid JSON, no markdown fences."""
+- Return ONLY valid JSON, no markdown fences.
+
+/no_think"""
 
 
 # ---------------------------------------------------------------------------
@@ -149,12 +151,12 @@ def build_analyzer_node(state: AnalysisState) -> dict:
         return {"build_info": None, "completed_nodes": ["build_analyzer"], "errors": []}
 
     llm = ChatOllama(
-        model="gpt-oss:20b",
+        model=os.getenv("OLLAMA_MODEL", "gpt-oss:20b"),
         temperature=0,
         format="json",
         base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         num_predict=4096,
-        num_ctx=32768,
+        num_ctx=8192,
     )
     messages = [
         ("system", _SYSTEM_PROMPT),

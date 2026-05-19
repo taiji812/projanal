@@ -122,7 +122,9 @@ Rules:
 - Include a tactic only if the project clearly implements that functionality
 - Include a technique only if specific code evidence exists
 - custom_tags: exact names from the Custom Tags list only
-- Empty arrays are valid if no match is found — do NOT fabricate IDs"""
+- Empty arrays are valid if no match is found — do NOT fabricate IDs
+
+/no_think"""
 
 
 # ---------------------------------------------------------------------------
@@ -223,12 +225,12 @@ def tactic_classifier_node(state: AnalysisState) -> dict:
 
     system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(vocabulary_context=vocabulary_context)
     llm = ChatOllama(
-        model="gpt-oss:20b",
+        model=os.getenv("OLLAMA_MODEL", "gpt-oss:20b"),
         temperature=0,
         format="json",
         base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         num_predict=4096,
-        num_ctx=32768,
+        num_ctx=8192,
     )
     messages = [
         ("system", system_prompt),

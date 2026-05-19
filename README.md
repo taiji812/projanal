@@ -163,13 +163,27 @@ result = run_analysis("/path/to/project", project_id="my-project")
 
 ## Configuration
 
-### Ollama endpoint
+### Ollama endpoint & model
 
-Set the `OLLAMA_BASE_URL` environment variable (default: `http://localhost:11434`):
+| 환경변수 | 기본값 | 설명 |
+|---------|--------|------|
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 서버 주소 |
+| `OLLAMA_MODEL` | `gpt-oss:20b` | 사용할 LLM 모델 |
 
 ```bash
 export OLLAMA_BASE_URL=http://ollama-service:11434
+export OLLAMA_MODEL=qwen3-coder:30b
 ```
+
+**권장 모델 (성능 순):**
+
+| 모델 | 크기 | 특징 |
+|------|------|------|
+| `qwen3-coder:30b` | ~18GB | 코드 이해·JSON 출력 최고 수준, **권장** |
+| `qwen2.5-coder:14b` | ~8.7GB | 메모리 여유가 적을 때, JSON 안정적 |
+| `gpt-oss:20b` | ~13GB | 기본값, tactic_classifier에서 간헐적 빈 응답 발생 |
+
+> **Qwen3 계열 주의사항**: thinking 모드가 기본으로 활성화되어 있으나, 이 에이전트는 시스템 프롬프트에 `/no_think` 토큰을 포함해 자동으로 비활성화합니다.
 
 ### Colima 환경 (macOS)
 
@@ -206,6 +220,7 @@ docker run --rm \
   -v $(pwd)/out:/out \
   -v chroma-model-cache:/root/.cache/chroma \
   -e OLLAMA_BASE_URL=http://192.168.5.2:11434 \
+  -e OLLAMA_MODEL=qwen3-coder:30b \
   --entrypoint analyze \
   analysis-agent /workspace --id my-project --output /out/my-project.json
 ```
