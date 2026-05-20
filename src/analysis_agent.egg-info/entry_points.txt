@@ -1,2 +1,0 @@
-[console_scripts]
-analyze = analysis_agent.cli:app

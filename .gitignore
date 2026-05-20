@@ -13,3 +13,12 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Claude Code local settings & worktrees
+.claude/
+
+# Analysis output
+out/
+
+# Auto-generated agent docs
+AGENTS.md
