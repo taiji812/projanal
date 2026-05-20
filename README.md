@@ -28,10 +28,43 @@ pip install -e .
 
 > **의존성은 Docker 이미지 안에만 설치되어 있습니다.** 로컬 Python 환경 없이 아래 Docker 방법으로 테스트하세요.
 
-### 0. 이미지 빌드 (코드 변경 후 1회)
+### 0. 환경 설정
 
 ```bash
+cp .env.example .env
+# .env 편집: OLLAMA_BASE_URL, OLLAMA_MODEL, WORKSPACE_PATH 등 설정
+```
+
+### 0-1. 이미지 빌드 (코드 변경 후 1회)
+
+```bash
+docker compose build
+# 또는
 docker build -t analysis-agent .
+```
+
+---
+
+### 방법 0 — Docker Compose (권장)
+
+`.env` 파일로 환경변수를 관리하고 docker compose로 실행합니다.
+
+**CLI 일회성 분석:**
+
+```bash
+# .env의 WORKSPACE_PATH 사용
+docker compose run --rm cli /workspace --id my-project --output /out/my-project.json
+
+# 경로를 직접 지정할 경우
+WORKSPACE_PATH=/path/to/project docker compose run --rm cli /workspace --id my-project --output /out/my-project.json
+```
+
+**REST API 서버:**
+
+```bash
+docker compose up api          # 포그라운드
+docker compose up -d api       # 백그라운드
+docker compose down            # 종료
 ```
 
 ---

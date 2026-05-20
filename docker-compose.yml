@@ -1,0 +1,43 @@
+services:
+
+  # ── REST API 서버 (기본 모드) ────────────────────────────────────────────
+  # docker compose up api
+  api:
+    build: .
+    image: analysis-agent:latest
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      - OLLAMA_BASE_URL
+      - OLLAMA_MODEL
+      - ANALYSIS_EMBED_MODEL
+    volumes:
+      - chroma-model-cache:/root/.cache/chroma
+      - ${OUTPUT_PATH:-./out}:/out
+    restart: unless-stopped
+
+  # ── CLI 일회성 분석 ──────────────────────────────────────────────────────
+  # 단일 프로젝트:
+  #   docker compose run --rm cli /workspace --id <project-id> --output /out/<project-id>.json
+  #
+  # 다른 경로 지정:
+  #   WORKSPACE_PATH=/other/path docker compose run --rm cli /workspace --id <project-id> ...
+  cli:
+    build: .
+    image: analysis-agent:latest
+    entrypoint: ["analyze"]
+    env_file: .env
+    environment:
+      - OLLAMA_BASE_URL
+      - OLLAMA_MODEL
+      - ANALYSIS_EMBED_MODEL
+    volumes:
+      - chroma-model-cache:/root/.cache/chroma
+      - ${WORKSPACE_PATH:-/tmp/workspace}:/workspace:ro
+      - ${OUTPUT_PATH:-./out}:/out
+    profiles:
+      - cli
+
+volumes:
+  chroma-model-cache:
