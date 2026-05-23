@@ -1,5 +1,4 @@
 """AgentRunner — shared entry point for both CLI and REST API."""
-import json
 import os
 from pathlib import Path
 
@@ -22,7 +21,7 @@ def run_analysis(
         custom_vocabulary_path: Optional path to a custom vocabulary YAML file.
 
     Returns:
-        Result dict (the final aggregated JSON).
+        ModuleProperty dict (the final aggregated JSON).
     """
     repo_path = str(Path(repo_path).resolve())
     if not os.path.isdir(repo_path):
@@ -40,8 +39,13 @@ def run_analysis(
         "key_files": {},
         "readme_content": "",
         "language_composition": {},
-        "build_info": None,
-        "artifacts": [],
+        "source_language": [],
+        "build_features": None,
+        "execution_features": None,
+        "payload_info": None,
+        "module_category": "",
+        "capabilities": [],
+        "post_exploits": [],
         "mitre_tactics": [],
         "mitre_techniques": [],
         "custom_tags": [],

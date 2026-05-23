@@ -3,31 +3,6 @@ from typing import Annotated, Any, Optional
 from typing_extensions import TypedDict
 
 
-class BuildParameter(TypedDict):
-    name: str
-    type: str          # string | boolean | choice | text
-    default: str
-    choices: list[str] # for choice type
-    description: str
-    source: str        # where it was found: makefile | source_code | readme | cmake
-
-
-class BuildInfo(TypedDict):
-    tool: str                    # CMake | Make | MSBuild | Gradle | Maven | Cargo | go | shell
-    tool_path: str               # e.g. MSBuild.exe, /usr/bin/make
-    commands: list[str]          # ordered build command sequence
-    environment: str             # windows | linux | cross
-    parameters: list[BuildParameter]
-    notes: str
-
-
-class ArtifactInfo(TypedDict):
-    filename: str
-    output_path: str
-    artifact_type: str   # exe | dll | lib | so | elf | jar | dotnet_exe | dotnet_dll | wasm | other
-    description: str
-
-
 class AnalysisState(TypedDict):
     # --- inputs ---
     repo_path: str
@@ -36,13 +11,18 @@ class AnalysisState(TypedDict):
 
     # --- file_explorer outputs ---
     file_tree: list[str]         # relative paths, depth-limited
-    key_files: dict[str, str]    # {"role": "path"}, e.g. {"cmake": "CMakeLists.txt"}
+    key_files: dict[str, str]    # {"role": "path"}
     readme_content: str
 
     # --- parallel node outputs ---
-    language_composition: dict[str, float]   # {"C++": 0.65, "C": 0.20, ...}
-    build_info: Optional[BuildInfo]
-    artifacts: list[ArtifactInfo]
+    language_composition: dict[str, float]   # {"C++": 0.65, ...} internal use
+    source_language: list[str]               # ["C#", "C/C++"] for module_form
+    build_features: Optional[dict]           # BuildFeatures-compatible dict
+    execution_features: Optional[dict]       # ExecutionFeatures-compatible dict
+    payload_info: Optional[dict]             # PayloadInfo-compatible dict (loaders only)
+    module_category: str                     # RAT | Loader | Implant | ...
+    capabilities: list[str]                  # high-level capability groups
+    post_exploits: list[str]                 # specific post-exploit features
     mitre_tactics: list[str]                 # tactic IDs: ["TA0002", "TA0005"]
     mitre_techniques: list[str]              # technique IDs: ["T1055", ...]
     custom_tags: list[str]                   # from custom vocabulary

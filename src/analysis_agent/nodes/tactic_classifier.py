@@ -1,7 +1,7 @@
-"""TacticClassifier node — MITRE ATT&CK and custom tag classification.
+"""TacticClassifier node — MITRE ATT&CK classification + functional feature extraction.
 
 Context source (in priority order):
-  1. RAG multi-query retrieval (one query per tactic category)
+  1. RAG multi-query retrieval
   2. Fallback: grep-based collection
 """
 
@@ -14,28 +14,21 @@ from langchain_ollama import ChatOllama
 from analysis_agent.state import AnalysisState
 from analysis_agent.tools.filesystem import grep_content, read_file
 
+
 # ---------------------------------------------------------------------------
-# RAG retrieval (primary path)
+# RAG retrieval
 # ---------------------------------------------------------------------------
 
-# Queries aligned to major tactic categories — cast a wide, diverse net
 _TACTIC_QUERIES = [
-    # TA0002 Execution
     "process start execute command powershell cmd shell script",
-    # TA0003 Persistence
     "registry startup run key autostart persistence install",
-    # TA0005 Defense Evasion / TA0497 Sandbox
     "anti analysis debug sandbox virtual machine evasion obfuscate",
-    # TA0006 Credential Access
     "password credential recovery harvest lsass token stealer",
-    # TA0007 Discovery
     "system information enumerate process network discovery",
-    # TA0009 Collection / Keylogger / Screenshot
     "keylogger keyboard hook screen capture screenshot clipboard input",
-    # TA0010 Exfiltration / TA0011 C2
     "tcp socket connect send receive network c2 command control",
-    # Generic red team
     "RAT implant backdoor beacon malware remote administration",
+    "payload loader inject reflective CLR shellcode",
 ]
 
 
@@ -56,30 +49,21 @@ def _rag_context(project_id: str, readme: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Fallback: grep-based collection (used when index not available)
+# Fallback: grep-based collection
 # ---------------------------------------------------------------------------
 
 _GREP_PATTERNS = [
-    # Network / C2
     (r"WSAStartup|WSASocket|TcpClient|TcpListener|connect\s*\(|recv\s*\(|send\s*\(|HttpClient|SslStream", [".c", ".cpp", ".h", ".cs", ".go", ".rs"]),
-    # Process injection
     (r"VirtualAlloc|VirtualAllocEx|CreateRemoteThread|WriteProcessMemory|NtCreateThread|RtlCreateUserThread", [".c", ".cpp", ".h", ".cs"]),
-    # Keylogger / input capture
     (r"SetWindowsHookEx|GetAsyncKeyState|keylog|KeyLogger|WH_KEYBOARD|LimeLogger", [".c", ".cpp", ".h", ".cs"]),
-    # Persistence
     (r"RegSetValueEx|RegistryKey|HKEY_CURRENT_USER|CurrentVersion\\\\Run|Startup", [".c", ".cpp", ".h", ".cs"]),
-    # Defense evasion
     (r"IsDebuggerPresent|CheckRemoteDebugger|Anti.Analysis|AntiDebug|MutexControl", [".c", ".cpp", ".h", ".cs"]),
-    # Credential access
     (r"lsass|credential|password|recover|stealer|harvest|token", [".c", ".cpp", ".h", ".cs"]),
-    # Execution
     (r"Process\.Start|ProcessStartInfo|CreateProcess|ShellExecute|cmd\.exe|powershell", [".cs"]),
-    # Screenshot / collection
     (r"screenshot|CopyFromScreen|BitBlt|Bitmap\b|RemoteDesktop", [".c", ".cpp", ".h", ".cs"]),
-    # Generic red team keywords
     (r"shellcode|payload|implant|beacon|\bRAT\b|backdoor|c2\b|command.and.control", [".c", ".cpp", ".h", ".cs", ".go", ".rs", ".py", ".md"]),
-    # C# / .NET specific
     (r"Assembly\.Load|Reflection|AppDomain|Process\.Start", [".cs"]),
+    (r"CLRLoad|ReflectiveDLL|LoadLibrary|GetProcAddress|inject", [".c", ".cpp", ".h"]),
 ]
 
 
@@ -92,8 +76,7 @@ def _fallback_context(repo_path: str, key_files: dict[str, str], readme: str) ->
     for pattern, exts in _GREP_PATTERNS:
         hits = grep_content(repo_path, pattern, extensions=exts, max_matches=3)
         for h in hits:
-            line = h["text"].strip()[:120]
-            all_hits.append(f"  {h['file']}:{h['line']}: {line}")
+            all_hits.append(f"  {h['file']}:{h['line']}: {h['text'].strip()[:120]}")
 
     if all_hits:
         sections.append("=== Code Signals ===\n" + "\n".join(all_hits[:40]))
@@ -112,6 +95,9 @@ Available vocabulary (use ONLY these IDs/names):
 
 Return ONLY valid JSON (no markdown fences):
 {{
+  "module_category": "<RAT|Loader|Implant|Dropper|Injector|Credential Harvester|Recon Tool|Lateral Movement Tool|Post-Exploitation|Ransomware|Rootkit|Other>",
+  "capabilities": ["<command and control|execution|defense evasion|credential access|discovery|collection|lateral movement|persistence|impact>"],
+  "post_exploits": ["<keylogger|file upload|file download|file browser|file remove|desktop control|process listing|process creation|process execution|process termination|run command|screenshot|credential dump|network scan|lateral move|...>"],
   "mitre_tactics": ["TA0002", "TA0011"],
   "mitre_techniques": ["T1059", "T1056"],
   "custom_tags": ["C2 Framework", "Keylogger"],
@@ -119,19 +105,21 @@ Return ONLY valid JSON (no markdown fences):
 }}
 
 Rules:
-- Include a tactic only if the project clearly implements that functionality
-- Include a technique only if specific code evidence exists
+- module_category: single most accurate category for the tool
+- capabilities: high-level groups from MITRE tactic names (lowercase)
+- post_exploits: specific features the tool implements; empty list if not applicable
+- mitre_tactics: ONLY tactics for which you see DIRECT code evidence in the context
+- mitre_techniques: ONLY the 3-8 MOST PROMINENT techniques; do NOT list every possible match
 - custom_tags: exact names from the Custom Tags list only
-- Empty arrays are valid if no match is found — do NOT fabricate IDs
+- Empty arrays are valid — do NOT fabricate IDs; quality over quantity
 
 /no_think"""
 
 
 # ---------------------------------------------------------------------------
-# Deterministic MITRE enrichment (post-LLM, fills gaps without adding tokens)
+# Deterministic MITRE enrichment
 # ---------------------------------------------------------------------------
 
-# Maps custom_tags → (tactics, techniques) guaranteed by definition
 _TAG_MITRE: dict[str, tuple[list[str], list[str]]] = {
     "C2 Framework":          (["TA0011"], ["T1095", "T1071"]),
     "Keylogger":             (["TA0009"], ["T1056"]),
@@ -145,9 +133,9 @@ _TAG_MITRE: dict[str, tuple[list[str], list[str]]] = {
     "Recon Tool":            (["TA0007", "TA0043"], ["T1082", "T1046"]),
     "Lateral Movement Tool": (["TA0008"], ["T1021"]),
     "Post-Exploitation":     (["TA0002", "TA0007"], ["T1059", "T1082"]),
+    "Payload Delivery":      (["TA0002"], ["T1059"]),
 }
 
-# Maps code signal patterns → (tactics, techniques)
 _SIGNAL_MITRE: list[tuple[re.Pattern, list[str], list[str]]] = [
     (re.compile(r"powershell|cmd\.exe|Process\.Start|ProcessStartInfo|CreateProcess|ShellExecute", re.I),
      ["TA0002"], ["T1059"]),
@@ -171,7 +159,52 @@ _SIGNAL_MITRE: list[tuple[re.Pattern, list[str], list[str]]] = [
      ["TA0005"], ["T1562"]),
     (re.compile(r"RegSetValue|RegOpenKey|Modify.Registry", re.I),
      ["TA0005"], ["T1112"]),
+    (re.compile(r"CLRLoad|ReflectiveDLL|LoadLibrary.*inject|inject.*payload", re.I),
+     ["TA0005"], ["T1055"]),
 ]
+
+
+# Deterministic category from custom_tags (first match wins)
+_TAG_TO_CATEGORY: list[tuple[str, str]] = [
+    ("C2 Framework",         "RAT"),
+    ("Implant",              "Implant"),
+    ("Loader",               "Loader"),
+    ("Dropper",              "Dropper"),
+    ("Injector",             "Injector"),
+    ("Credential Harvester", "Credential Harvester"),
+    ("Ransomware",           "Ransomware"),
+    ("Rootkit",              "Rootkit"),
+    ("Recon Tool",           "Recon Tool"),
+    ("Lateral Movement Tool","Lateral Movement Tool"),
+    ("Post-Exploitation",    "Post-Exploitation"),
+    ("Keylogger",            "Spyware"),
+    ("Payload Delivery",     "Dropper"),
+]
+
+# Maps capability/category → MITRE-aligned capability names
+_TAG_TO_CAPABILITIES: dict[str, list[str]] = {
+    "C2 Framework":          ["command and control"],
+    "Implant":               ["command and control", "execution"],
+    "Loader":                ["execution", "defense evasion"],
+    "Dropper":               ["execution"],
+    "Injector":              ["defense evasion", "execution"],
+    "Credential Harvester":  ["credential access"],
+    "Ransomware":            ["impact"],
+    "Rootkit":               ["defense evasion", "persistence"],
+    "Recon Tool":            ["discovery"],
+    "Lateral Movement Tool": ["lateral movement"],
+    "Post-Exploitation":     ["execution", "discovery"],
+    "Keylogger":             ["collection"],
+    "Payload Delivery":      ["execution"],
+}
+
+_TAG_TO_POST_EXPLOITS: dict[str, list[str]] = {
+    "Keylogger":             ["keylogger"],
+    "C2 Framework":          ["command and control"],
+    "Credential Harvester":  ["credential dump"],
+    "Recon Tool":            ["system discovery", "network scan"],
+    "Lateral Movement Tool": ["lateral move"],
+}
 
 
 def _enrich_mitre(
@@ -180,22 +213,43 @@ def _enrich_mitre(
     custom_tags: list[str],
     context: str,
 ) -> tuple[list[str], list[str]]:
-    """Add deterministic MITRE mappings from custom_tags and code signals."""
     t_set = set(tactics)
     te_set = set(techniques)
-
     for tag in custom_tags:
         if tag in _TAG_MITRE:
             new_t, new_te = _TAG_MITRE[tag]
             t_set.update(new_t)
             te_set.update(new_te)
-
     for pat, new_t, new_te in _SIGNAL_MITRE:
         if pat.search(context):
             t_set.update(new_t)
             te_set.update(new_te)
-
     return sorted(t_set), sorted(te_set)
+
+
+def _derive_category(custom_tags: list[str], llm_category: str) -> str:
+    for tag, category in _TAG_TO_CATEGORY:
+        if tag in custom_tags:
+            return category
+    return llm_category or "Other"
+
+
+def _derive_capabilities(custom_tags: list[str], llm_caps: list[str]) -> list[str]:
+    caps: list[str] = list(llm_caps)
+    for tag in custom_tags:
+        for c in _TAG_TO_CAPABILITIES.get(tag, []):
+            if c not in caps:
+                caps.append(c)
+    return caps
+
+
+def _derive_post_exploits(custom_tags: list[str], llm_pe: list[str]) -> list[str]:
+    pe: list[str] = list(llm_pe)
+    for tag in custom_tags:
+        for feat in _TAG_TO_POST_EXPLOITS.get(tag, []):
+            if feat not in pe:
+                pe.append(feat)
+    return pe
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +273,9 @@ def tactic_classifier_node(state: AnalysisState) -> dict:
 
     if not context.strip():
         return {
+            "module_category": "Other",
+            "capabilities": [],
+            "post_exploits": [],
             "mitre_tactics": [], "mitre_techniques": [], "custom_tags": [],
             "completed_nodes": ["tactic_classifier"], "errors": [],
         }
@@ -248,16 +305,22 @@ def tactic_classifier_node(state: AnalysisState) -> dict:
         mitre_tactics    = data.get("mitre_tactics", [])
         mitre_techniques = data.get("mitre_techniques", [])
         custom_tags      = data.get("custom_tags", [])
+        llm_category     = data.get("module_category", "")
+        llm_capabilities = data.get("capabilities", [])
+        llm_post_exploits = data.get("post_exploits", [])
     except Exception as e:
-        # LLM failed — still run deterministic enrichment on context alone
-        mitre_tactics, mitre_techniques, custom_tags = [], [], []
         mitre_tactics, mitre_techniques = _enrich_mitre([], [], [], context)
+        custom_tags = []
+        llm_category, llm_capabilities, llm_post_exploits = "", [], []
         return {
-            "mitre_tactics":   mitre_tactics,
+            "module_category":  _derive_category(custom_tags, llm_category),
+            "capabilities":     _derive_capabilities(custom_tags, llm_capabilities),
+            "post_exploits":    _derive_post_exploits(custom_tags, llm_post_exploits),
+            "mitre_tactics":    mitre_tactics,
             "mitre_techniques": mitre_techniques,
-            "custom_tags":     custom_tags,
-            "completed_nodes": ["tactic_classifier"],
-            "errors":          [f"tactic_classifier (LLM failed, used signal enrichment): {e}"],
+            "custom_tags":      custom_tags,
+            "completed_nodes":  ["tactic_classifier"],
+            "errors":           [f"tactic_classifier (LLM failed, used signal enrichment): {e}"],
         }
 
     mitre_tactics, mitre_techniques = _enrich_mitre(
@@ -265,6 +328,9 @@ def tactic_classifier_node(state: AnalysisState) -> dict:
     )
 
     return {
+        "module_category":  _derive_category(custom_tags, llm_category),
+        "capabilities":     _derive_capabilities(custom_tags, llm_capabilities),
+        "post_exploits":    _derive_post_exploits(custom_tags, llm_post_exploits),
         "mitre_tactics":    mitre_tactics,
         "mitre_techniques": mitre_techniques,
         "custom_tags":      custom_tags,

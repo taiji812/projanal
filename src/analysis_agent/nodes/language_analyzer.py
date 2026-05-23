@@ -2,7 +2,6 @@
 from analysis_agent.state import AnalysisState
 from analysis_agent.tools.filesystem import count_lines_by_extension
 
-# Map file extensions to canonical language names
 _EXT_TO_LANG: dict[str, str] = {
     ".c": "C",
     ".h": "C/C++ Header",
@@ -42,11 +41,41 @@ _EXT_TO_LANG: dict[str, str] = {
     ".f90": "Fortran", ".f": "Fortran",
 }
 
-# Extensions to exclude from language stats (config/data/docs)
 _IGNORE_EXTS = {
     ".md", ".txt", ".rst", ".html", ".htm", ".css",
     ".svg", ".png", ".jpg", ".lock", ".sum",
 }
+
+# Consolidate C/C++ family into a single canonical name
+_LANG_CONSOLIDATION: dict[str, str] = {
+    "C": "C/C++",
+    "C++": "C/C++",
+    "C/C++ Header": "C/C++",
+    "C++ Header": "C/C++",
+}
+
+# Non-programming config/data languages excluded from source_language
+_CONFIG_LANGS = {
+    "XML", "JSON", "YAML", "TOML", "CMake", "Gradle",
+    "Batch", "Shell", "PowerShell", "Protobuf",
+}
+
+
+def _derive_source_language(composition: dict[str, float]) -> list[str]:
+    """Convert composition dict to consolidated source language list."""
+    consolidated: dict[str, float] = {}
+    for lang, ratio in composition.items():
+        canonical = _LANG_CONSOLIDATION.get(lang, lang)
+        consolidated[canonical] = consolidated.get(canonical, 0.0) + ratio
+
+    result = [
+        lang
+        for lang, ratio in sorted(consolidated.items(), key=lambda x: -x[1])
+        if ratio > 0.03
+        and lang not in _CONFIG_LANGS
+        and not lang.startswith("Other (")
+    ]
+    return result[:3]
 
 
 def language_analyzer_node(state: AnalysisState) -> dict:
@@ -55,9 +84,13 @@ def language_analyzer_node(state: AnalysisState) -> dict:
     try:
         raw_counts = count_lines_by_extension(repo_path)
     except Exception as e:
-        return {"language_composition": {}, "completed_nodes": ["language_analyzer"], "errors": [f"language_analyzer: {e}"]}
+        return {
+            "language_composition": {},
+            "source_language": [],
+            "completed_nodes": ["language_analyzer"],
+            "errors": [f"language_analyzer: {e}"],
+        }
 
-    # Aggregate by language
     lang_lines: dict[str, int] = {}
     for ext, count in raw_counts.items():
         if ext in _IGNORE_EXTS:
@@ -74,6 +107,7 @@ def language_analyzer_node(state: AnalysisState) -> dict:
 
     return {
         "language_composition": composition,
+        "source_language": _derive_source_language(composition),
         "completed_nodes": ["language_analyzer"],
         "errors": [],
     }

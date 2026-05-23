@@ -1,53 +1,86 @@
-"""BuildAnalyzer node — extracts build tool, commands, environment, and parameters.
+"""BuildAnalyzer node — extracts build tool, args, parameters, and artifact glob.
 
 Context source (in priority order):
   1. RAG retrieval from ChromaDB (populated by index_builder)
-  2. Fallback: direct file reads (old behaviour, used if index not available)
+  2. Fallback: direct file reads
 """
 
 import json
 import os
 import re
-from typing import Any
+from typing import Any, Optional
 
 from langchain_ollama import ChatOllama
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from analysis_agent.state import AnalysisState
 from analysis_agent.tools.filesystem import find_files_by_extension, grep_content, read_file
 
-_MACRO_PATTERN = re.compile(
-    r"""(?:
-        \-D([A-Z_][A-Z0-9_]*)
-        |/D([A-Z_][A-Z0-9_]*)
-        |\$\(([A-Z_][A-Z0-9_]*)\)
-        |ifdef\s+([A-Z_][A-Z0-9_]*)
-        |if\s+defined\(([A-Z_][A-Z0-9_]*)\)
-    )""",
-    re.VERBOSE | re.IGNORECASE,
-)
+
+# ---------------------------------------------------------------------------
+# Pydantic models matching BuildFeatures schema
+# ---------------------------------------------------------------------------
+
+class _BuildParam(BaseModel):
+    param_type: str = Field(default="string")   # string | choice | object | boolean
+    param_title: str = Field(default="")
+    param_name: str
+    param_description: str = Field(default="")
+    param_default: Optional[str] = Field(default=None)
+    choice_list: Optional[list[str]] = Field(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: dict) -> dict:
+        # Accept old field names from LLM
+        if not data.get("param_name") and data.get("name"):
+            data["param_name"] = data["name"]
+        if not data.get("param_title") and data.get("param_name"):
+            data["param_title"] = data.get("param_name", "")
+        if not data.get("param_default") and data.get("default"):
+            data["param_default"] = str(data["default"])
+        if not data.get("choice_list") and data.get("choices"):
+            data["choice_list"] = data["choices"]
+        if not data.get("param_type") and data.get("type"):
+            data["param_type"] = data["type"]
+        return data
 
 
-class _BuildParameter(BaseModel):
-    name: str
-    type: str = Field(default="string", description="string | boolean | choice | text")
-    default: str = Field(default="")
-    choices: list[str] = Field(default_factory=list)
-    description: str = Field(default="")
-    source: str = Field(default="")
+class _BuildFeaturesOutput(BaseModel):
+    build_tool: str = Field(default="unknown")
+    no_concurrent_build: bool = Field(default=False)
+    build_tool_args: str = Field(default="")
+    build_params: list[_BuildParam] = Field(default_factory=list)
+    build_env: dict = Field(default_factory=lambda: {"build_env_os": "unknown"})
+    artifacts_archive: str = Field(default="")
+    build_dependencies: list[str] = Field(default_factory=list)
 
-
-class _BuildInfoOutput(BaseModel):
-    tool: str = Field(description="CMake | Make | MSBuild | Gradle | Maven | Cargo | go | shell | docker | unknown")
-    tool_path: str = Field(default="")
-    commands: list[str] = Field(description="Ordered build commands")
-    environment: str = Field(description="windows | linux | cross | unknown")
-    parameters: list[_BuildParameter] = Field(default_factory=list)
-    notes: str = Field(default="")
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: dict) -> dict:
+        # Accept old field names
+        if not data.get("build_tool") and data.get("tool"):
+            data["build_tool"] = data["tool"]
+        if not data.get("build_tool_args") and data.get("commands"):
+            cmds = data["commands"]
+            if isinstance(cmds, list) and cmds:
+                # Strip leading tool name, keep args
+                first = cmds[0]
+                for prefix in ("msbuild ", "cmake ", "make ", "cargo ", "go "):
+                    if first.lower().startswith(prefix):
+                        first = first[len(prefix):]
+                        break
+                data["build_tool_args"] = first
+        if not data.get("build_env"):
+            env = data.get("environment", "unknown")
+            data["build_env"] = {"build_env_os": env}
+        if not data.get("build_params") and data.get("parameters"):
+            data["build_params"] = data["parameters"]
+        return data
 
 
 # ---------------------------------------------------------------------------
-# RAG retrieval (primary path)
+# RAG retrieval
 # ---------------------------------------------------------------------------
 
 _BUILD_QUERIES = [
@@ -68,7 +101,7 @@ def _rag_context(project_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Fallback: direct file reads (used when index not available)
+# Fallback: direct file reads
 # ---------------------------------------------------------------------------
 
 def _fallback_context(repo_path: str, key_files: dict[str, str]) -> str:
@@ -84,13 +117,11 @@ def _fallback_context(repo_path: str, key_files: dict[str, str]) -> str:
             if content:
                 sections.append(f"=== {key_files[role]} ===\n{content}")
 
-    # Shell/batch scripts containing build keywords
     for sf in find_files_by_extension(repo_path, [".sh", ".bat", ".cmd", ".ps1"])[:5]:
         content = read_file(repo_path, sf, max_bytes=2048)
         if content and any(kw in content.lower() for kw in ["cmake", "make", "msbuild", "gcc", "build"]):
             sections.append(f"=== {sf} ===\n{content}")
 
-    # Preprocessor macros
     macro_hits = grep_content(
         repo_path,
         r"#\s*(?:ifdef|if\s+defined)\s*\(?\s*([A-Z_][A-Z0-9_]*)",
@@ -108,29 +139,35 @@ def _fallback_context(repo_path: str, key_files: dict[str, str]) -> str:
 # LLM prompt
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """You are a build system expert. Analyze the provided build context and return JSON:
+_SYSTEM_PROMPT = """You are a build system expert. Analyze the build configuration and return JSON.
+
 {
-  "tool": "<CMake|Make|MSBuild|Gradle|Maven|Cargo|go|shell|docker|unknown>",
-  "tool_path": "<executable path or empty>",
-  "commands": ["<step1>", "<step2>"],
-  "environment": "<windows|linux|cross|unknown>",
-  "parameters": [
+  "build_tool": "<msbuild_dotnet|msbuild|cmake|make|go|cargo|gradle|maven|shell|docker|unknown>",
+  "no_concurrent_build": false,
+  "build_tool_args": "<solution/project file + fixed args; use ${PARAM_NAME} for variable params>",
+  "build_params": [
     {
-      "name": "<PARAM>",
-      "type": "<string|boolean|choice|text>",
-      "default": "<value>",
-      "choices": [],
-      "description": "<what it controls>",
-      "source": "<cmake|makefile|source_code|readme|csproj>"
+      "param_type": "<string|choice|boolean|object>",
+      "param_title": "<human readable label>",
+      "param_name": "<PARAM_NAME>",
+      "param_description": "<what it controls>",
+      "param_default": "<default value or null>",
+      "choice_list": ["Release", "Debug"]
     }
   ],
-  "notes": "<additional build notes>"
+  "build_env": {"build_env_os": "<windows|linux|macos|cross>"},
+  "artifacts_archive": "<glob pattern for output artifacts, e.g. Outputs/* or bin\\\\Release\\\\*.exe>",
+  "build_dependencies": []
 }
 
 Rules:
-- commands: exact shell commands needed to build the project
-- parameters: only build-time variables a user would pass (e.g. CMAKE_BUILD_TYPE, Configuration)
-- environment: MSVC/MSBuild/bat → windows; gcc/make/sh → linux; both → cross
+- build_tool: use "msbuild_dotnet" for .NET/.csproj; "msbuild" for native .vcxproj
+- build_tool_args: start from solution/project file, NOT the tool name itself
+  Fixed params go inline (/p:Configuration=Release); variable params use ${PARAM_NAME}
+  Example: "MyProject.sln /p:Configuration=Release /p:Platform=${platform}"
+- param_type "choice" when values are enumerable; "string" otherwise
+- artifacts_archive: single glob covering all built outputs (e.g. "bin/Release/*.exe")
+  Use "**/*.exe" or "Outputs/*" style — prefer shortest covering glob
 - Return ONLY valid JSON, no markdown fences.
 
 /no_think"""
@@ -148,7 +185,7 @@ def build_analyzer_node(state: AnalysisState) -> dict:
     context = _rag_context(project_id) or _fallback_context(repo_path, key_files)
 
     if not context.strip():
-        return {"build_info": None, "completed_nodes": ["build_analyzer"], "errors": []}
+        return {"build_features": None, "completed_nodes": ["build_analyzer"], "errors": []}
 
     llm = ChatOllama(
         model=os.getenv("OLLAMA_MODEL", "gpt-oss:20b"),
@@ -171,8 +208,12 @@ def build_analyzer_node(state: AnalysisState) -> dict:
         if raw.startswith("```"):
             raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
         data: dict[str, Any] = json.loads(raw)
-        build_info = _BuildInfoOutput(**data).model_dump()
+        build_features = _BuildFeaturesOutput(**data).model_dump()
     except Exception as e:
-        return {"build_info": None, "completed_nodes": ["build_analyzer"], "errors": [f"build_analyzer: {e}"]}
+        return {
+            "build_features": None,
+            "completed_nodes": ["build_analyzer"],
+            "errors": [f"build_analyzer: {e}"],
+        }
 
-    return {"build_info": build_info, "completed_nodes": ["build_analyzer"], "errors": []}
+    return {"build_features": build_features, "completed_nodes": ["build_analyzer"], "errors": []}
