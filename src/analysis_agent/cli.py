@@ -16,13 +16,15 @@ def analyze(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write JSON result to file"),
     custom_vocab: Optional[Path] = typer.Option(None, "--vocab", help="Custom vocabulary YAML file"),
     pretty: bool = typer.Option(True, "--pretty/--compact", help="Pretty-print JSON output"),
+    no_notes: bool = typer.Option(False, "--no-notes", help="Skip generating reasoning_notes.md"),
 ):
-    """Analyze a source code project and output structured JSON."""
+    """Analyze a source code project and output structured JSON + reasoning notes."""
     from analysis_agent.runner import run_analysis
+    from analysis_agent.report import generate_reasoning_notes
 
     typer.echo(f"Analyzing: {repo_path}", err=True)
     try:
-        result = run_analysis(
+        result, reasoning = run_analysis(
             repo_path=repo_path,
             project_id=project_id,
             custom_vocabulary_path=str(custom_vocab) if custom_vocab else None,
@@ -40,6 +42,12 @@ def analyze(
     if output:
         output.write_text(json_output, encoding="utf-8")
         typer.echo(f"Result written to {output}", err=True)
+
+        if not no_notes:
+            notes_path = output.with_name(output.stem + "_reasoning.md")
+            notes_md = generate_reasoning_notes(result, reasoning)
+            notes_path.write_text(notes_md, encoding="utf-8")
+            typer.echo(f"Reasoning notes written to {notes_path}", err=True)
     else:
         typer.echo(json_output)
 

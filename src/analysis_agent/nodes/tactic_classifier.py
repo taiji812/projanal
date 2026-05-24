@@ -101,7 +101,7 @@ Return ONLY valid JSON (no markdown fences):
   "mitre_tactics": ["TA0002", "TA0011"],
   "mitre_techniques": ["T1059", "T1056"],
   "custom_tags": ["C2 Framework", "Keylogger"],
-  "reasoning": "One sentence describing what this tool does"
+  "reasoning": "Explain: (1) why module_category was chosen, (2) specific code signals or README passages that indicate each capability, (3) which post_exploit features were directly observed, (4) MITRE tactic/technique assignments with concrete evidence from the context."
 }}
 
 Rules:
@@ -302,12 +302,13 @@ def tactic_classifier_node(state: AnalysisState) -> dict:
         if raw.startswith("```"):
             raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
         data = json.loads(raw)
-        mitre_tactics    = data.get("mitre_tactics", [])
-        mitre_techniques = data.get("mitre_techniques", [])
-        custom_tags      = data.get("custom_tags", [])
-        llm_category     = data.get("module_category", "")
-        llm_capabilities = data.get("capabilities", [])
+        mitre_tactics     = data.get("mitre_tactics", [])
+        mitre_techniques  = data.get("mitre_techniques", [])
+        custom_tags       = data.get("custom_tags", [])
+        llm_category      = data.get("module_category", "")
+        llm_capabilities  = data.get("capabilities", [])
         llm_post_exploits = data.get("post_exploits", [])
+        tactic_reasoning  = data.get("reasoning", "")
     except Exception as e:
         mitre_tactics, mitre_techniques = _enrich_mitre([], [], [], context)
         custom_tags = []
@@ -319,6 +320,7 @@ def tactic_classifier_node(state: AnalysisState) -> dict:
             "mitre_tactics":    mitre_tactics,
             "mitre_techniques": mitre_techniques,
             "custom_tags":      custom_tags,
+            "tactic_reasoning": f"(LLM failed — deterministic signal enrichment used) {e}",
             "completed_nodes":  ["tactic_classifier"],
             "errors":           [f"tactic_classifier (LLM failed, used signal enrichment): {e}"],
         }
@@ -334,6 +336,7 @@ def tactic_classifier_node(state: AnalysisState) -> dict:
         "mitre_tactics":    mitre_tactics,
         "mitre_techniques": mitre_techniques,
         "custom_tags":      custom_tags,
+        "tactic_reasoning": tactic_reasoning,
         "completed_nodes":  ["tactic_classifier"],
         "errors":           [],
     }

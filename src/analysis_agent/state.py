@@ -27,6 +27,11 @@ class AnalysisState(TypedDict):
     mitre_techniques: list[str]              # technique IDs: ["T1055", ...]
     custom_tags: list[str]                   # from custom vocabulary
 
+    # --- reasoning (human-readable derivation notes) ---
+    build_reasoning: str
+    artifact_reasoning: str
+    tactic_reasoning: str
+
     # --- bookkeeping ---
     completed_nodes: Annotated[list[str], operator.add]
     errors: Annotated[list[str], operator.add]

@@ -157,7 +157,8 @@ _SYSTEM_PROMPT = """You are a build system expert. Analyze the build configurati
   ],
   "build_env": {"build_env_os": "<windows|linux|macos|cross>"},
   "artifacts_archive": "<glob pattern for output artifacts, e.g. Outputs/* or bin\\\\Release\\\\*.exe>",
-  "build_dependencies": []
+  "build_dependencies": [],
+  "reasoning": "<Explain: (1) which file(s)/patterns identified the build tool, (2) how build_tool_args was derived and which properties are fixed vs variable, (3) how each build_param was found and what it controls, (4) what evidence led to the artifacts_archive glob. Reference specific file names and property values.>"
 }
 
 Rules:
@@ -208,12 +209,19 @@ def build_analyzer_node(state: AnalysisState) -> dict:
         if raw.startswith("```"):
             raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
         data: dict[str, Any] = json.loads(raw)
+        reasoning = data.pop("reasoning", "")
         build_features = _BuildFeaturesOutput(**data).model_dump()
     except Exception as e:
         return {
             "build_features": None,
+            "build_reasoning": "",
             "completed_nodes": ["build_analyzer"],
             "errors": [f"build_analyzer: {e}"],
         }
 
-    return {"build_features": build_features, "completed_nodes": ["build_analyzer"], "errors": []}
+    return {
+        "build_features": build_features,
+        "build_reasoning": reasoning,
+        "completed_nodes": ["build_analyzer"],
+        "errors": [],
+    }

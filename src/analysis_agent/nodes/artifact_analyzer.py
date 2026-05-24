@@ -35,6 +35,11 @@ class _ExecutionComponent(BaseModel):
         # Accept common LLM field variants
         if not data.get("pathname") and data.get("filename"):
             data["pathname"] = data["filename"]
+        # Coerce string to list for list fields (LLM sometimes returns a string)
+        for field in ("exec_type", "exec_arch", "exec_os", "exec_dependency"):
+            val = data.get(field)
+            if isinstance(val, str):
+                data[field] = [val] if val else []
         if not data.get("exec_type") and data.get("artifact_type"):
             data["exec_type"] = [data["artifact_type"]]
         if not data.get("exec_os"):
@@ -163,7 +168,8 @@ Return JSON:
       }
     ]
   },
-  "payload_info": null
+  "payload_info": null,
+  "reasoning": "<Explain: (1) which config entries identified each component and its name, (2) how exec_type was determined (cite specific OutputType/ConfigurationType values), (3) how exec_arch was inferred (cite Platform property), (4) why multi_instance is true/false, (5) if payload_info is populated, what code evidence indicates loader/injector behaviour. Reference specific property names and values.>"
 }
 
 For Loader / Injector type tools, populate payload_info instead of null:
@@ -232,6 +238,7 @@ def artifact_analyzer_node(state: AnalysisState) -> dict:
         if raw.startswith("```"):
             raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
         data: dict[str, Any] = json.loads(raw)
+        reasoning = data.pop("reasoning", "")
         output = _ArtifactAnalysisOutput(**data)
         execution_features = output.execution_features.model_dump()
         payload_info = output.payload_info.model_dump() if output.payload_info else None
@@ -239,6 +246,7 @@ def artifact_analyzer_node(state: AnalysisState) -> dict:
         return {
             "execution_features": None,
             "payload_info": None,
+            "artifact_reasoning": "",
             "completed_nodes": ["artifact_analyzer"],
             "errors": [f"artifact_analyzer: {e}"],
         }
@@ -246,6 +254,7 @@ def artifact_analyzer_node(state: AnalysisState) -> dict:
     return {
         "execution_features": execution_features,
         "payload_info": payload_info,
+        "artifact_reasoning": reasoning,
         "completed_nodes": ["artifact_analyzer"],
         "errors": [],
     }

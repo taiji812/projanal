@@ -34,7 +34,7 @@ _jobs: dict[str, dict] = {}
 def _run_and_store(job_id: str, repo_path: str, project_id: str, custom_vocab: str | None, cleanup_dir: str | None):
     from analysis_agent.runner import run_analysis
     try:
-        result = run_analysis(repo_path=repo_path, project_id=project_id, custom_vocabulary_path=custom_vocab)
+        result, _reasoning = run_analysis(repo_path=repo_path, project_id=project_id, custom_vocabulary_path=custom_vocab)
         _jobs[job_id] = {"status": "completed", "result": result}
     except Exception as e:
         _jobs[job_id] = {"status": "failed", "error": str(e)}
@@ -50,7 +50,7 @@ async def analyze_path(req: AnalyzePathRequest):
 
     project_id = req.project_id or Path(req.repo_path).name
     try:
-        result = await asyncio.get_event_loop().run_in_executor(
+        result, _reasoning = await asyncio.get_event_loop().run_in_executor(
             None,
             lambda: run_analysis(
                 repo_path=req.repo_path,
