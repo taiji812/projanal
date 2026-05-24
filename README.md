@@ -157,40 +157,74 @@ result = run_analysis("/path/to/project", project_id="my-project")
 
 ## Output Schema
 
+`ModuleProperty` 포맷 (`src/analysis_agent/schema.py`의 Pydantic 모델로 검증):
+
 ```json
 {
-  "project_id": "string",
-  "analyzed_at": "ISO8601",
-  "language_composition": { "C++": 0.61, "C/C++ Header": 0.19 },
-  "mitre_tactics": ["TA0002", "TA0011"],
-  "mitre_techniques": ["T1059", "T1056"],
-  "custom_tags": ["C2 Framework", "Keylogger"],
-  "build_info": {
-    "tool": "MSBuild",
-    "tool_path": "",
-    "commands": ["MSBuild.exe Lilith.sln /p:Configuration=Release"],
-    "environment": "windows",
-    "parameters": [
+  "module_name": "string",
+  "module_category": "RAT | Loader | Implant | Dropper | Injector | Credential Harvester | ...",
+  "module_form": {
+    "form_type": "sourcecode",
+    "source_language": ["C#"],
+    "has_submodule": false
+  },
+  "functional_features": {
+    "capabilities": ["command and control", "execution"],
+    "post_exploits": ["keylogger", "file upload", "file download", "run command"]
+  },
+  "build_features": {
+    "build_tool": "msbuild_dotnet | msbuild | cmake | make | cargo | go | ...",
+    "no_concurrent_build": false,
+    "build_tool_args": "Lilith.sln /p:Configuration=${msbuild_cfg} /p:Platform=${platform}",
+    "build_params": [
       {
-        "name": "Configuration",
-        "type": "choice",
-        "default": "Release",
-        "choices": ["Debug", "Release"],
-        "description": "...",
-        "source": "Lilith.sln"
+        "param_type": "string | choice | object | boolean",
+        "param_title": "빌드 설정 옵션",
+        "param_name": "msbuild_cfg",
+        "param_description": "빌드 설정 옵션",
+        "param_default": "Release",
+        "choice_list": ["Release", "Debug"]
       }
     ],
-    "notes": "..."
+    "build_env": { "build_env_os": "windows | linux | macos | cross" },
+    "artifacts_archive": "**/*.exe",
+    "build_dependencies": []
   },
-  "artifacts": [
-    {
-      "filename": "Lilith.exe",
-      "output_path": "Release\\x64",
-      "artifact_type": "exe",
-      "description": "..."
-    }
-  ],
+  "execution_features": {
+    "components": [
+      {
+        "name": "Lilith Server",
+        "exec_arch": ["x86", "x64"],
+        "exec_os": ["windows"],
+        "exec_type": ["exe(native)"],
+        "exec_dependency": [],
+        "multi_instance": false,
+        "pathname": "Server.exe"
+      }
+    ]
+  },
+  "payload_info": null,
+  "mitre_tactics": ["TA0002", "TA0011"],
+  "mitre_techniques": ["T1059", "T1056"],
+  "analyzed_at": "ISO8601",
   "errors": []
+}
+```
+
+`payload_info`는 Loader/Injector 타입에만 채워집니다:
+
+```json
+"payload_info": {
+  "payload_exec_type": ["dll(native)"],
+  "execution_method": ["reflective-loading"],
+  "execution_technique_notes": ["CLR Loading"],
+  "payload_target_path": "Payload\\",
+  "delivery_type": "external-file",
+  "payload_transform_info": {
+    "algorithm": "RC4",
+    "keyinfo": { "size": 128, "key_input_type": "user-input" }
+  },
+  "embedding_type": null
 }
 ```
 
@@ -281,7 +315,8 @@ custom_tags:
 1. Create `src/analysis_agent/nodes/my_node.py`
 2. Implement `def my_node(state: AnalysisState) -> dict` — always include `"completed_nodes": ["my_node"]` and `"errors": []` in the return value
 3. Add the output field to `AnalysisState` in `state.py`
-4. Register the node and edges in `graph.py`:
+4. 새 출력이 최종 결과에 포함돼야 한다면 `schema.py`의 `ModuleProperty`와 `aggregator.py`도 수정
+5. Register the node and edges in `graph.py`:
 
 ```python
 g.add_node("my_node", my_node)
@@ -344,13 +379,16 @@ export ANALYSIS_EMBED_MODEL=nomic-embed-text
 
 ## MITRE 분류 방식
 
-`tactic_classifier`는 두 단계로 MITRE ATT&CK ID를 결정합니다.
+`tactic_classifier`는 두 단계로 MITRE ATT&CK ID와 기능 분류를 결정합니다.
 
-1. **LLM** (짧은 프롬프트): RAG 컨텍스트를 보고 `custom_tags` 반환
-2. **`_enrich_mitre()`** (결정론적): 태그 룩업 + 코드 시그널 패턴 매칭으로 tactics/techniques 추가
-   - LLM 실패 시에도 컨텍스트 기반 분류 제공
+1. **LLM** (RAG 컨텍스트 기반): `module_category`, `capabilities`, `post_exploits`, `custom_tags`, MITRE ID 반환
+2. **결정론적 후처리 (`_enrich_mitre`, `_derive_*`)**: LLM 결과에 누락된 항목 보완
+   - `_TAG_MITRE`: custom_tags → tactics/techniques 룩업 테이블
+   - `_SIGNAL_MITRE`: RAG 컨텍스트 코드 패턴 매칭
+   - `_TAG_TO_CATEGORY`, `_TAG_TO_CAPABILITIES`, `_TAG_TO_POST_EXPLOITS`: 기능 분류 보완
+   - LLM 실패 시에도 컨텍스트 기반 결정론적 분류 제공
 
-MITRE 매핑 규칙 추가/수정: `src/analysis_agent/nodes/tactic_classifier.py`의 `_TAG_MITRE`, `_SIGNAL_MITRE`.
+매핑 규칙 추가/수정: `src/analysis_agent/nodes/tactic_classifier.py`의 `_TAG_MITRE`, `_SIGNAL_MITRE`, `_TAG_TO_CATEGORY`, `_TAG_TO_CAPABILITIES`, `_TAG_TO_POST_EXPLOITS`.
 
 ## Tech Stack
 
