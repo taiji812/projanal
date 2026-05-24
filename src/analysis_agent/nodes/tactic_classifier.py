@@ -95,9 +95,9 @@ Available vocabulary (use ONLY these IDs/names):
 
 Return ONLY valid JSON (no markdown fences):
 {{
-  "module_category": "<RAT|Loader|Implant|Dropper|Injector|Credential Harvester|Recon Tool|Lateral Movement Tool|Post-Exploitation|Ransomware|Rootkit|Other>",
-  "capabilities": ["<command and control|execution|defense evasion|credential access|discovery|collection|lateral movement|persistence|impact>"],
-  "post_exploits": ["<keylogger|file upload|file download|file browser|file remove|desktop control|process listing|process creation|process execution|process termination|run command|screenshot|credential dump|network scan|lateral move|...>"],
+  "module_category": "<RAT|C2Framework|Loader|Library|Builder>",
+  "capabilities": ["<reconnaissance|initial access|execution|persistence|privilege escalation|defense evasion|credential access|discovery|lateral movement|collection|command and control|exfiltration|impact>"],
+  "post_exploits": ["<camera|command and control|credential and hash harvesting|desktop control|encrypt|file upload|file download|file browser|file remove|keylogger|lateral movement|Mimikatz|mining|network and host enumeration|port scanning|privilege escalation|process creation|process execution|process termination|process listing|ransomeware|run command|screenshot>"],
   "mitre_tactics": ["TA0002", "TA0011"],
   "mitre_techniques": ["T1059", "T1056"],
   "custom_tags": ["C2 Framework", "Keylogger"],
@@ -105,9 +105,10 @@ Return ONLY valid JSON (no markdown fences):
 }}
 
 Rules:
-- module_category: single most accurate category for the tool
-- capabilities: high-level groups from MITRE tactic names (lowercase)
-- post_exploits: specific features the tool implements; empty list if not applicable
+- module_category: choose the single best fit from RAT|C2Framework|Loader|Library|Builder
+  RAT = remote access trojan, implant, backdoor; Loader = loader, injector, dropper; Library = helper DLL/SDK
+- capabilities: use ONLY the exact strings listed above
+- post_exploits: use ONLY the exact strings listed above; empty list if not applicable
 - mitre_tactics: ONLY tactics for which you see DIRECT code evidence in the context
 - mitre_techniques: ONLY the 3-8 MOST PROMINENT techniques; do NOT list every possible match
 - custom_tags: exact names from the Custom Tags list only
@@ -164,24 +165,86 @@ _SIGNAL_MITRE: list[tuple[re.Pattern, list[str], list[str]]] = [
 ]
 
 
-# Deterministic category from custom_tags (first match wins)
+# Valid strict vocabularies from service VO
+_VALID_MODULE_CATEGORIES = frozenset(["RAT", "C2Framework", "Loader", "Library", "Builder"])
+
+_VALID_CAPABILITIES = frozenset([
+    "reconnaissance", "initial access", "execution", "persistence",
+    "privilege escalation", "defense evasion", "credential access",
+    "discovery", "lateral movement", "collection", "command and control",
+    "exfiltration", "impact",
+])
+
+_VALID_POST_EXPLOITS = frozenset([
+    "camera", "command and control", "credential and hash harvesting",
+    "desktop control", "encrypt", "file upload", "file download",
+    "file browser", "file remove", "keylogger", "lateral movement",
+    "Mimikatz", "mining", "network and host enumeration", "port scanning",
+    "privilege escalation", "process creation", "process execution",
+    "process termination", "process listing", "ransomeware", "run command",
+    "screenshot",
+])
+
+# Normalize common LLM output variations to exact vocab
+_POST_EXPLOIT_NORMALIZE: dict[str, str] = {
+    "credential dump": "credential and hash harvesting",
+    "credential harvesting": "credential and hash harvesting",
+    "credentials": "credential and hash harvesting",
+    "network scan": "network and host enumeration",
+    "network scanning": "network and host enumeration",
+    "host enumeration": "network and host enumeration",
+    "lateral move": "lateral movement",
+    "lateral_movement": "lateral movement",
+    "process list": "process listing",
+    "process kill": "process termination",
+    "process terminate": "process termination",
+    "ransomware": "ransomeware",
+    "run cmd": "run command",
+    "cmd execution": "run command",
+    "shell execution": "run command",
+}
+
+# Map LLM module_category output → strict enum
+_LLM_CATEGORY_NORMALIZE: dict[str, str] = {
+    "RAT": "RAT",
+    "C2Framework": "C2Framework",
+    "C2 Framework": "C2Framework",
+    "Loader": "Loader",
+    "Library": "Library",
+    "Builder": "Builder",
+    "Implant": "RAT",
+    "Backdoor": "RAT",
+    "Injector": "Loader",
+    "Dropper": "Loader",
+    "Dropper/Loader": "Loader",
+    "Credential Harvester": "RAT",
+    "Ransomware": "RAT",
+    "Rootkit": "RAT",
+    "Recon Tool": "RAT",
+    "Lateral Movement Tool": "RAT",
+    "Post-Exploitation": "RAT",
+    "Spyware": "RAT",
+    "Other": "RAT",
+}
+
+# Deterministic category from custom_tags (first match wins) — strict enum values
 _TAG_TO_CATEGORY: list[tuple[str, str]] = [
-    ("C2 Framework",         "RAT"),
-    ("Implant",              "Implant"),
+    ("C2 Framework",         "C2Framework"),
+    ("Implant",              "RAT"),
     ("Loader",               "Loader"),
-    ("Dropper",              "Dropper"),
-    ("Injector",             "Injector"),
-    ("Credential Harvester", "Credential Harvester"),
-    ("Ransomware",           "Ransomware"),
-    ("Rootkit",              "Rootkit"),
-    ("Recon Tool",           "Recon Tool"),
-    ("Lateral Movement Tool","Lateral Movement Tool"),
-    ("Post-Exploitation",    "Post-Exploitation"),
-    ("Keylogger",            "Spyware"),
-    ("Payload Delivery",     "Dropper"),
+    ("Dropper",              "Loader"),
+    ("Injector",             "Loader"),
+    ("Credential Harvester", "RAT"),
+    ("Ransomware",           "RAT"),
+    ("Rootkit",              "RAT"),
+    ("Recon Tool",           "RAT"),
+    ("Lateral Movement Tool","RAT"),
+    ("Post-Exploitation",    "RAT"),
+    ("Keylogger",            "RAT"),
+    ("Payload Delivery",     "Loader"),
 ]
 
-# Maps capability/category → MITRE-aligned capability names
+# Maps custom_tag → CAPABILITIES (exact vocab)
 _TAG_TO_CAPABILITIES: dict[str, list[str]] = {
     "C2 Framework":          ["command and control"],
     "Implant":               ["command and control", "execution"],
@@ -198,12 +261,13 @@ _TAG_TO_CAPABILITIES: dict[str, list[str]] = {
     "Payload Delivery":      ["execution"],
 }
 
+# Maps custom_tag → POST_EXPLOITS (exact vocab)
 _TAG_TO_POST_EXPLOITS: dict[str, list[str]] = {
     "Keylogger":             ["keylogger"],
     "C2 Framework":          ["command and control"],
-    "Credential Harvester":  ["credential dump"],
-    "Recon Tool":            ["system discovery", "network scan"],
-    "Lateral Movement Tool": ["lateral move"],
+    "Credential Harvester":  ["credential and hash harvesting"],
+    "Recon Tool":            ["network and host enumeration"],
+    "Lateral Movement Tool": ["lateral movement"],
 }
 
 
@@ -231,23 +295,36 @@ def _derive_category(custom_tags: list[str], llm_category: str) -> str:
     for tag, category in _TAG_TO_CATEGORY:
         if tag in custom_tags:
             return category
-    return llm_category or "Other"
+    return _LLM_CATEGORY_NORMALIZE.get(llm_category, "RAT")
 
 
 def _derive_capabilities(custom_tags: list[str], llm_caps: list[str]) -> list[str]:
-    caps: list[str] = list(llm_caps)
+    seen: set[str] = set()
+    caps: list[str] = []
+    for c in llm_caps:
+        if c in _VALID_CAPABILITIES and c not in seen:
+            seen.add(c)
+            caps.append(c)
     for tag in custom_tags:
         for c in _TAG_TO_CAPABILITIES.get(tag, []):
-            if c not in caps:
+            if c not in seen:
+                seen.add(c)
                 caps.append(c)
     return caps
 
 
 def _derive_post_exploits(custom_tags: list[str], llm_pe: list[str]) -> list[str]:
-    pe: list[str] = list(llm_pe)
+    seen: set[str] = set()
+    pe: list[str] = []
+    for item in llm_pe:
+        normalized = _POST_EXPLOIT_NORMALIZE.get(item.lower(), item)
+        if normalized in _VALID_POST_EXPLOITS and normalized not in seen:
+            seen.add(normalized)
+            pe.append(normalized)
     for tag in custom_tags:
         for feat in _TAG_TO_POST_EXPLOITS.get(tag, []):
-            if feat not in pe:
+            if feat not in seen:
+                seen.add(feat)
                 pe.append(feat)
     return pe
 

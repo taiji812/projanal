@@ -21,8 +21,41 @@ from analysis_agent.tools.filesystem import find_files_by_extension, grep_conten
 # Pydantic models matching BuildFeatures schema
 # ---------------------------------------------------------------------------
 
+_VALID_BUILD_TOOLS = frozenset(["msbuild", "msbuild_dotnet", "jenkinsfile", "python", "golang"])
+
+_BUILD_TOOL_NORMALIZE: dict[str, str] = {
+    "msbuild_dotnet": "msbuild_dotnet",
+    "msbuild": "msbuild",
+    "jenkinsfile": "jenkinsfile",
+    "python": "python",
+    "golang": "golang",
+    "go": "golang",
+    "cargo": "msbuild",     # Rust — no native support; fall back
+    "cmake": "msbuild",     # CMake on Windows → MSBuild generator
+    "make": "msbuild",
+    "gradle": "msbuild",
+    "maven": "msbuild",
+    "shell": "msbuild",
+    "docker": "msbuild",
+    "unknown": "msbuild",
+}
+
+_PARAM_TYPE_NORMALIZE: dict[str, str] = {
+    "boolean": "string",    # no boolean type in service VO
+    "bool": "string",
+    "flag": "string",
+    "enum": "choice",
+    "select": "choice",
+    "dropdown": "choice",
+    "multiline": "text",
+    "json": "object",
+    "yaml": "object",
+    "dict": "object",
+}
+
+
 class _BuildParam(BaseModel):
-    param_type: str = Field(default="string")   # string | choice | object | boolean
+    param_type: str = Field(default="string")   # string | text | choice | object
     param_title: str = Field(default="")
     param_name: str
     param_description: str = Field(default="")
@@ -32,7 +65,6 @@ class _BuildParam(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize(cls, data: dict) -> dict:
-        # Accept old field names from LLM
         if not data.get("param_name") and data.get("name"):
             data["param_name"] = data["name"]
         if not data.get("param_title") and data.get("param_name"):
@@ -43,28 +75,34 @@ class _BuildParam(BaseModel):
             data["choice_list"] = data["choices"]
         if not data.get("param_type") and data.get("type"):
             data["param_type"] = data["type"]
+        # Normalize invalid param_type values
+        pt = data.get("param_type", "string")
+        data["param_type"] = _PARAM_TYPE_NORMALIZE.get(str(pt).lower(), pt)
         return data
 
 
 class _BuildFeaturesOutput(BaseModel):
-    build_tool: str = Field(default="unknown")
+    build_tool: str = Field(default="msbuild")
     no_concurrent_build: bool = Field(default=False)
     build_tool_args: str = Field(default="")
     build_params: list[_BuildParam] = Field(default_factory=list)
-    build_env: dict = Field(default_factory=lambda: {"build_env_os": "unknown"})
+    build_env: dict = Field(default_factory=lambda: {"build_env_os": "windows"})
     artifacts_archive: str = Field(default="")
+    artifacts_archive_zip: bool = Field(default=False)
+    artifacts_archive_zipname: Optional[str] = Field(default=None)
     build_dependencies: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
     def _normalize(cls, data: dict) -> dict:
-        # Accept old field names
         if not data.get("build_tool") and data.get("tool"):
             data["build_tool"] = data["tool"]
+        # Normalize build_tool to valid enum
+        tool = str(data.get("build_tool", "")).lower()
+        data["build_tool"] = _BUILD_TOOL_NORMALIZE.get(tool, "msbuild")
         if not data.get("build_tool_args") and data.get("commands"):
             cmds = data["commands"]
             if isinstance(cmds, list) and cmds:
-                # Strip leading tool name, keep args
                 first = cmds[0]
                 for prefix in ("msbuild ", "cmake ", "make ", "cargo ", "go "):
                     if first.lower().startswith(prefix):
@@ -72,7 +110,7 @@ class _BuildFeaturesOutput(BaseModel):
                         break
                 data["build_tool_args"] = first
         if not data.get("build_env"):
-            env = data.get("environment", "unknown")
+            env = data.get("environment", "windows")
             data["build_env"] = {"build_env_os": env}
         if not data.get("build_params") and data.get("parameters"):
             data["build_params"] = data["parameters"]
@@ -142,12 +180,12 @@ def _fallback_context(repo_path: str, key_files: dict[str, str]) -> str:
 _SYSTEM_PROMPT = """You are a build system expert. Analyze the build configuration and return JSON.
 
 {
-  "build_tool": "<msbuild_dotnet|msbuild|cmake|make|go|cargo|gradle|maven|shell|docker|unknown>",
+  "build_tool": "<msbuild_dotnet|msbuild|jenkinsfile|python|golang>",
   "no_concurrent_build": false,
   "build_tool_args": "<solution/project file + fixed args; use ${PARAM_NAME} for variable params>",
   "build_params": [
     {
-      "param_type": "<string|choice|boolean|object>",
+      "param_type": "<string|text|choice|object>",
       "param_title": "<human readable label>",
       "param_name": "<PARAM_NAME>",
       "param_description": "<what it controls>",
@@ -155,20 +193,27 @@ _SYSTEM_PROMPT = """You are a build system expert. Analyze the build configurati
       "choice_list": ["Release", "Debug"]
     }
   ],
-  "build_env": {"build_env_os": "<windows|linux|macos|cross>"},
+  "build_env": {
+    "build_env_os": "<windows|linux|macos>",
+    "container_info": {"image_name": "<Docker image>", "image_version": "<tag>"} or null
+  },
   "artifacts_archive": "<glob pattern for output artifacts, e.g. Outputs/* or bin\\\\Release\\\\*.exe>",
+  "artifacts_archive_zip": false,
+  "artifacts_archive_zipname": null,
   "build_dependencies": [],
   "reasoning": "<Explain: (1) which file(s)/patterns identified the build tool, (2) how build_tool_args was derived and which properties are fixed vs variable, (3) how each build_param was found and what it controls, (4) what evidence led to the artifacts_archive glob. Reference specific file names and property values.>"
 }
 
 Rules:
-- build_tool: use "msbuild_dotnet" for .NET/.csproj; "msbuild" for native .vcxproj
+- build_tool: msbuild_dotnet for .NET/.csproj; msbuild for native .vcxproj; jenkinsfile for CI pipeline; python for Python build scripts; golang for Go/Rust projects
 - build_tool_args: start from solution/project file, NOT the tool name itself
   Fixed params go inline (/p:Configuration=Release); variable params use ${PARAM_NAME}
   Example: "MyProject.sln /p:Configuration=Release /p:Platform=${platform}"
-- param_type "choice" when values are enumerable; "string" otherwise
+- param_type: choice when values are enumerable; text for multi-line input; object for JSON/YAML structures; string otherwise
 - artifacts_archive: single glob covering all built outputs (e.g. "bin/Release/*.exe")
-  Use "**/*.exe" or "Outputs/*" style — prefer shortest covering glob
+- artifacts_archive_zip: true only if the build explicitly zips its output artifacts
+- artifacts_archive_zipname: required (non-null string) only when artifacts_archive_zip is true
+- container_info: null unless a specific Docker image is required for the build environment
 - Return ONLY valid JSON, no markdown fences.
 
 /no_think"""

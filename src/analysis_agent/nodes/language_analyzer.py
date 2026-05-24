@@ -11,9 +11,9 @@ _EXT_TO_LANG: dict[str, str] = {
     ".java": "Java",
     ".go": "Go",
     ".rs": "Rust",
-    ".js": "JavaScript", ".mjs": "JavaScript", ".cjs": "JavaScript",
-    ".ts": "TypeScript", ".tsx": "TypeScript",
-    ".jsx": "JavaScript (JSX)",
+    ".js": "Javascript", ".mjs": "Javascript", ".cjs": "Javascript",
+    ".ts": "Typescript", ".tsx": "Typescript",
+    ".jsx": "Javascript",
     ".py": "Python",
     ".rb": "Ruby",
     ".kt": "Kotlin", ".kts": "Kotlin",
@@ -60,22 +60,44 @@ _CONFIG_LANGS = {
     "Batch", "Shell", "PowerShell", "Protobuf",
 }
 
+# Valid SOURCECODE vocab from service VO
+_SOURCECODE_VOCAB = frozenset([
+    "Assembly", "C/C++", "C#", "Dlang", "Docker", "Golang", "Java",
+    "Javascript", "Nim", "Perl", "PHP", "Python", "Ruby", "Rust",
+    "Shell", "Sleep", "Typescript", "VBA", "Etc.",
+])
+
+# Map internal lang names → SOURCECODE vocab names
+_TO_SOURCECODE: dict[str, str] = {
+    "Go": "Golang",
+}
+
+
+def _normalize_to_sourcecode_vocab(lang: str) -> str:
+    if lang in _TO_SOURCECODE:
+        return _TO_SOURCECODE[lang]
+    return lang if lang in _SOURCECODE_VOCAB else "Etc."
+
 
 def _derive_source_language(composition: dict[str, float]) -> list[str]:
-    """Convert composition dict to consolidated source language list."""
+    """Convert composition dict to consolidated, SOURCECODE-vocab source language list."""
     consolidated: dict[str, float] = {}
     for lang, ratio in composition.items():
         canonical = _LANG_CONSOLIDATION.get(lang, lang)
         consolidated[canonical] = consolidated.get(canonical, 0.0) + ratio
 
-    result = [
-        lang
-        for lang, ratio in sorted(consolidated.items(), key=lambda x: -x[1])
-        if ratio > 0.03
-        and lang not in _CONFIG_LANGS
-        and not lang.startswith("Other (")
-    ]
-    return result[:3]
+    seen: set[str] = set()
+    result: list[str] = []
+    for lang, ratio in sorted(consolidated.items(), key=lambda x: -x[1]):
+        if ratio <= 0.03 or lang in _CONFIG_LANGS or lang.startswith("Other ("):
+            continue
+        vocab_lang = _normalize_to_sourcecode_vocab(lang)
+        if vocab_lang not in seen:
+            seen.add(vocab_lang)
+            result.append(vocab_lang)
+        if len(result) >= 3:
+            break
+    return result
 
 
 def language_analyzer_node(state: AnalysisState) -> dict:

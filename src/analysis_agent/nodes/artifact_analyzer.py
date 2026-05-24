@@ -74,6 +74,67 @@ class _PayloadTransformInfo(BaseModel):
     keyinfo: Optional[_KeyInfo] = None
 
 
+_VALID_EXECUTION_METHODS = frozenset([
+    "process-hollowing", "process-herpaderping", "process-doppleganging",
+    "process-ghosting", "reflective-loading", ".net-assembly-loading",
+    "early-bird-injection", "thread-hijacking-injection",
+    "npmap-unmapviewofsection-injection", "propagate-injection",
+    "userdata-injection", "ewmi-injection", "atom-bombing",
+    "kernelcontroltable-injection", "ctrl-injection",
+    "alpc-injection", "queue-user-apc-injection", "custom-injection",
+])
+
+_EXECUTION_METHOD_NORMALIZE: dict[str, str] = {
+    "reflective": "reflective-loading",
+    "reflective loading": "reflective-loading",
+    "reflective-dll-injection": "reflective-loading",
+    "process injection": "custom-injection",
+    "process hollowing": "process-hollowing",
+    "dll injection": "reflective-loading",
+    "clr loading": ".net-assembly-loading",
+    "clr-loading": ".net-assembly-loading",
+    ".net assembly loading": ".net-assembly-loading",
+    "apc injection": "queue-user-apc-injection",
+    "thread hijacking": "thread-hijacking-injection",
+    "early bird injection": "early-bird-injection",
+    "early bird": "early-bird-injection",
+    "atom bombing": "atom-bombing",
+    "process doppelganging": "process-doppleganging",
+    "process ghosting": "process-ghosting",
+    "process herpaderping": "process-herpaderping",
+    "shellcode execution": "custom-injection",
+    "shellcode-exec": "custom-injection",
+}
+
+_VALID_EMBEDDING_TYPES = frozenset(["resource", "overlay", "data", "text"])
+
+_EMBEDDING_TYPE_NORMALIZE: dict[str, str] = {
+    "clr": "resource",
+    "dll": "data",
+    "embedded": "data",
+    "pe": "data",
+    "resource section": "resource",
+    "overlay section": "overlay",
+    "text section": "text",
+    "resources": "resource",
+}
+
+_VALID_KEY_INPUT_TYPES = frozenset(["fixed", "user-input", "file"])
+
+_KEY_INPUT_TYPE_NORMALIZE: dict[str, str] = {
+    "embedded": "fixed",
+    "hardcoded": "fixed",
+    "static": "fixed",
+    "hard-coded": "fixed",
+    "user input": "user-input",
+    "userinput": "user-input",
+    "user_input": "user-input",
+    "from file": "file",
+    "file-based": "file",
+    "file_based": "file",
+}
+
+
 class _PayloadInfoOutput(BaseModel):
     payload_exec_type: list[str] = Field(default_factory=list)
     execution_method: list[str] = Field(default_factory=list)
@@ -82,6 +143,39 @@ class _PayloadInfoOutput(BaseModel):
     delivery_type: Optional[str] = None
     payload_transform_info: Optional[_PayloadTransformInfo] = None
     embedding_type: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_vocab(cls, data: dict) -> dict:
+        # Normalize embedding_type
+        et = data.get("embedding_type")
+        if et:
+            norm = _EMBEDDING_TYPE_NORMALIZE.get(str(et).lower(), et)
+            data["embedding_type"] = norm if norm in _VALID_EMBEDDING_TYPES else None
+
+        # Normalize execution_method to valid vocab
+        methods = data.get("execution_method", [])
+        if isinstance(methods, list):
+            seen: set[str] = set()
+            normalized: list[str] = []
+            for m in methods:
+                nm = _EXECUTION_METHOD_NORMALIZE.get(str(m).lower(), m)
+                if nm in _VALID_EXECUTION_METHODS and nm not in seen:
+                    seen.add(nm)
+                    normalized.append(nm)
+            data["execution_method"] = normalized
+
+        # Normalize key_input_type inside payload_transform_info.keyinfo
+        pti = data.get("payload_transform_info")
+        if isinstance(pti, dict):
+            ki = pti.get("keyinfo")
+            if isinstance(ki, dict):
+                kit = ki.get("key_input_type")
+                if kit:
+                    norm_kit = _KEY_INPUT_TYPE_NORMALIZE.get(str(kit).lower(), kit)
+                    ki["key_input_type"] = norm_kit if norm_kit in _VALID_KEY_INPUT_TYPES else None
+
+        return data
 
 
 class _ArtifactAnalysisOutput(BaseModel):
@@ -238,16 +332,16 @@ Return JSON:
 
 For Loader / Injector type tools, populate payload_info instead of null:
 {
-  "payload_exec_type": ["<exe(.net)|dll(native)|shellcode|...>"],
-  "execution_method": ["<reflective-loading|process-injection|CLR-loading|shellcode-exec|...>"],
+  "payload_exec_type": ["<exe(.net)|dll(native)|shellcode|elf|powershell|...>"],
+  "execution_method": ["<process-hollowing|process-herpaderping|process-doppleganging|process-ghosting|reflective-loading|.net-assembly-loading|early-bird-injection|thread-hijacking-injection|npmap-unmapviewofsection-injection|propagate-injection|userdata-injection|ewmi-injection|atom-bombing|kernelcontroltable-injection|ctrl-injection|alpc-injection|queue-user-apc-injection|custom-injection>"],
   "execution_technique_notes": ["<technique description>"],
   "payload_target_path": "<path where payload is placed or null>",
-  "delivery_type": "<external-file|embedded|download>",
+  "delivery_type": "<embedded|download|external-file>",
   "payload_transform_info": {
     "algorithm": "<RC4|AES|XOR|null>",
-    "keyinfo": {"size": 128, "key_input_type": "<user-input|embedded>"}
+    "keyinfo": {"size": 128, "key_input_type": "<fixed|user-input|file>"}
   },
-  "embedding_type": null
+  "embedding_type": "<resource|overlay|data|text|null>"
 }
 
 Rules:
@@ -266,6 +360,8 @@ Rules:
     - BCryptEncrypt with BCRYPT_AES_ALGORITHM → "AES"
     - XOR loop over payload → "XOR"
   * If no encryption is found, set algorithm to null.
+- keyinfo.key_input_type: "fixed" (hardcoded key), "user-input" (key from CLI/user), "file" (key from file)
+- embedding_type: "resource" (PE resource section), "overlay" (PE overlay), "data" (data section), "text" (code section)
 - Return ONLY valid JSON, no markdown fences.
 
 /no_think"""
