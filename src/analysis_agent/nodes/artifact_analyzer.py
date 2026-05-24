@@ -7,6 +7,7 @@ Context source (in priority order):
 
 import json
 import os
+import re
 from typing import Any, Optional
 
 from langchain_ollama import ChatOllama
@@ -99,6 +100,67 @@ class _ArtifactAnalysisOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Deterministic crypto algorithm detection
+# ---------------------------------------------------------------------------
+
+# Patterns that indicate the ACTUAL encryption algorithm (not key derivation)
+_CRYPTO_DETECT: list[tuple[re.Pattern, str]] = [
+    # RC4: named function, comment, or KSA/PRGA markers
+    (re.compile(
+        r'\bRC4\b|RC4\s*암호|Key-scheduling algorithm|KSA\b|PRGA\b|Pseudo-random generation algorithm',
+        re.I,
+    ), "RC4"),
+    # AES: via BCrypt AES constant or named encrypt/decrypt function
+    (re.compile(
+        r'BCRYPT_AES_ALGORITHM|AES_encrypt|AES_decrypt|AesEncrypt|AesDecrypt'
+        r'|RijndaelManaged|Aes\.Create\(\)|CryptEncrypt.*AES',
+        re.I,
+    ), "AES"),
+    # ChaCha20 / Salsa20
+    (re.compile(r'chacha20|ChaCha20|salsa20', re.I), "ChaCha20"),
+    # XOR-based stream
+    (re.compile(r'xor_encrypt|xor_key|encrypt_xor|xor_stream|\bXOR\s+cipher', re.I), "XOR"),
+    # DES / 3DES
+    (re.compile(r'BCRYPT_3DES_ALGORITHM|BCRYPT_DES_ALGORITHM|\bTripleDES\b|\b3DES\b', re.I), "3DES"),
+    # Blowfish
+    (re.compile(r'\bBlowfish\b', re.I), "Blowfish"),
+]
+
+# SHA-based BCrypt calls are key DERIVATION, not encryption — do not confuse with AES
+_SHA_BCRYPT_ONLY = re.compile(
+    r'BCryptOpenAlgorithmProvider\s*\([^)]*BCRYPT_SHA\d+_ALGORITHM',
+    re.I | re.DOTALL,
+)
+
+
+def _detect_crypto_algorithm(context: str) -> str | None:
+    """Deterministically detect the payload encryption algorithm from code context.
+
+    Returns the algorithm name (e.g. "RC4", "AES") or None if undetermined.
+    BCrypt calls that only use SHA for key derivation are intentionally ignored.
+    """
+    for pattern, algo in _CRYPTO_DETECT:
+        if pattern.search(context):
+            return algo
+    return None
+
+
+def _detect_crypto_from_files(repo_path: str) -> str | None:
+    """Fallback: grep source files directly when RAG context missed the crypto code."""
+    from analysis_agent.tools.filesystem import grep_content
+    for pattern, algo in _CRYPTO_DETECT:
+        hits = grep_content(
+            repo_path,
+            pattern.pattern,
+            extensions=[".c", ".cpp", ".h", ".cs", ".py", ".go", ".rs"],
+            max_matches=1,
+        )
+        if hits:
+            return algo
+    return None
+
+
+# ---------------------------------------------------------------------------
 # RAG retrieval
 # ---------------------------------------------------------------------------
 
@@ -109,6 +171,8 @@ _ARTIFACT_QUERIES = [
     "jar war artifact maven gradle package",
     "cargo bin lib rust output",
     "payload loader inject reflective CLR shellcode",
+    # Dedicated crypto query — pulls encrypter/crypto source into context
+    "RC4 AES encryption decrypt cipher key schedule algorithm encrypt payload",
 ]
 
 
@@ -193,6 +257,15 @@ Rules:
 - exec_arch: infer from Platform property; default ["x86","x64"] if AnyCPU or unknown
 - multi_instance: true if multiple instances can run simultaneously (e.g. RAT client)
 - payload_info: only for Loader/Injector; null for RAT, Implant, standalone tools
+- payload_transform_info.algorithm CRITICAL RULE:
+  * Look for the ACTUAL ENCRYPTION function, NOT key derivation helpers.
+  * BCryptOpenAlgorithmProvider with BCRYPT_SHA256_ALGORITHM / BCRYPT_SHA1_ALGORITHM
+    is SHA hashing for KEY DERIVATION — this is NOT the encryption algorithm.
+  * The encryption algorithm is found in the function that transforms payload bytes:
+    - A function named "RC4" or implementing KSA+PRGA loops → "RC4"
+    - BCryptEncrypt with BCRYPT_AES_ALGORITHM → "AES"
+    - XOR loop over payload → "XOR"
+  * If no encryption is found, set algorithm to null.
 - Return ONLY valid JSON, no markdown fences.
 
 /no_think"""
@@ -250,6 +323,26 @@ def artifact_analyzer_node(state: AnalysisState) -> dict:
             "completed_nodes": ["artifact_analyzer"],
             "errors": [f"artifact_analyzer: {e}"],
         }
+
+    # Deterministic crypto detection: override LLM algorithm if we can detect it from code.
+    # LLMs commonly confuse BCrypt SHA (key derivation) with AES encryption.
+    if payload_info is not None:
+        # Ensure payload_transform_info exists as a dict
+        if payload_info.get("payload_transform_info") is None:
+            payload_info["payload_transform_info"] = {"algorithm": None, "keyinfo": None}
+
+        # 1) Try RAG context first; 2) fallback to direct file grep
+        detected = _detect_crypto_algorithm(context) or _detect_crypto_from_files(repo_path)
+        if detected:
+            llm_algo = (payload_info["payload_transform_info"] or {}).get("algorithm")
+            if llm_algo != detected:
+                payload_info["payload_transform_info"]["algorithm"] = detected
+                reasoning += (
+                    f"\n\n[Deterministic override] "
+                    f"LLM reported algorithm='{llm_algo}' but pattern scan found '{detected}'. "
+                    f"Note: BCrypt SHA-based calls are key derivation only — "
+                    f"the actual payload encryption function is {detected}."
+                )
 
     return {
         "execution_features": execution_features,
