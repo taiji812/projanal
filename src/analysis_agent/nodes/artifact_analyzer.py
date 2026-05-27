@@ -6,13 +6,12 @@ Context source (in priority order):
 """
 
 import json
-import os
 import re
 from typing import Any, Optional
 
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field, model_validator
 
+from analysis_agent.llm import get_ollama, thinking_off
 from analysis_agent.state import AnalysisState
 from analysis_agent.tools.filesystem import find_files_by_extension, read_file
 
@@ -362,9 +361,7 @@ Rules:
   * If no encryption is found, set algorithm to null.
 - keyinfo.key_input_type: "fixed" (hardcoded key), "user-input" (key from CLI/user), "file" (key from file)
 - embedding_type: "resource" (PE resource section), "overlay" (PE overlay), "data" (data section), "text" (code section)
-- Return ONLY valid JSON, no markdown fences.
-
-/no_think"""
+- Return ONLY valid JSON, no markdown fences."""
 
 
 # ---------------------------------------------------------------------------
@@ -386,16 +383,9 @@ def artifact_analyzer_node(state: AnalysisState) -> dict:
             "errors": [],
         }
 
-    llm = ChatOllama(
-        model=os.getenv("OLLAMA_MODEL", "gpt-oss:20b"),
-        temperature=0,
-        format="json",
-        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-        num_predict=4096,
-        num_ctx=8192,
-    )
+    llm = get_ollama()
     messages = [
-        ("system", _SYSTEM_PROMPT),
+        ("system", thinking_off(_SYSTEM_PROMPT)),
         ("human", f"Build configuration:\n\n{context}"),
     ]
 

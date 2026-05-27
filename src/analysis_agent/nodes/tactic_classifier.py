@@ -6,11 +6,9 @@ Context source (in priority order):
 """
 
 import json
-import os
 import re
 
-from langchain_ollama import ChatOllama
-
+from analysis_agent.llm import get_ollama, thinking_off
 from analysis_agent.state import AnalysisState
 from analysis_agent.tools.filesystem import grep_content, read_file
 
@@ -112,9 +110,7 @@ Rules:
 - mitre_tactics: ONLY tactics for which you see DIRECT code evidence in the context
 - mitre_techniques: ONLY the 3-8 MOST PROMINENT techniques; do NOT list every possible match
 - custom_tags: exact names from the Custom Tags list only
-- Empty arrays are valid — do NOT fabricate IDs; quality over quantity
-
-/no_think"""
+- Empty arrays are valid — do NOT fabricate IDs; quality over quantity"""
 
 
 # ---------------------------------------------------------------------------
@@ -357,15 +353,10 @@ def tactic_classifier_node(state: AnalysisState) -> dict:
             "completed_nodes": ["tactic_classifier"], "errors": [],
         }
 
-    system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(vocabulary_context=vocabulary_context)
-    llm = ChatOllama(
-        model=os.getenv("OLLAMA_MODEL", "gpt-oss:20b"),
-        temperature=0,
-        format="json",
-        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-        num_predict=4096,
-        num_ctx=8192,
+    system_prompt = thinking_off(
+        _SYSTEM_PROMPT_TEMPLATE.format(vocabulary_context=vocabulary_context)
     )
+    llm = get_ollama()
     messages = [
         ("system", system_prompt),
         ("human", f"Project context:\n\n{context}"),
