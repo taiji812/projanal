@@ -17,8 +17,9 @@ venv/
 # Claude Code local settings & worktrees
 .claude/
 
-# Analysis output
+# Analysis output / air-gap packaging output
 out/
+dist/
 
 # Auto-generated agent docs
 AGENTS.md

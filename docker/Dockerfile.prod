@@ -1,0 +1,17 @@
+# ── Production image: base + embedded project source ───────────────────────────
+# Build:
+#   docker build \
+#     -f docker/Dockerfile.prod \
+#     --build-arg BASE_IMAGE=analysis-agent-base:VERSION \
+#     -t analysis-agent:VERSION \
+#     .
+# ──────────────────────────────────────────────────────────────────────────────
+ARG BASE_IMAGE=analysis-agent-base:latest
+FROM ${BASE_IMAGE}
+
+COPY src/ /app/src/
+COPY config/ /app/config/
+
+EXPOSE 8080
+
+ENTRYPOINT ["python", "-m", "analysis_agent.api.routes"]

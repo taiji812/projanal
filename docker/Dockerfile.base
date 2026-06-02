@@ -1,0 +1,30 @@
+# ── Base image: Python deps pre-installed in UV venv ──────────────────────────
+# Contains only runtime dependencies — no project source.
+# Source is provided at runtime via volume mount (dev) or COPY (prod).
+#
+# Build:
+#   docker build -f docker/Dockerfile.base -t analysis-agent-base:VERSION .
+# ──────────────────────────────────────────────────────────────────────────────
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+
+# Copy only the package manifest — this layer is cached unless deps change.
+COPY pyproject.toml ./
+
+# Create venv at /opt/venv and install all declared dependencies.
+# A minimal stub satisfies the editable-install resolver without bundling source.
+# The editable install records /app/src as the Python path, so both
+# volume-mount (dev) and COPY (prod) approaches work without reinstalling.
+RUN mkdir -p src/analysis_agent && \
+    touch src/analysis_agent/__init__.py && \
+    uv venv /opt/venv && \
+    uv pip install --python /opt/venv/bin/python --no-cache -e .
+
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Default Ollama endpoint — override in docker-compose or k8s env.
+ENV OLLAMA_BASE_URL=http://ollama-service:11434

@@ -142,6 +142,78 @@ MITRE ATT&CK ID 매핑은 LLM이 과도하게 보수적으로 처리하는 경�
 
 MITRE 매핑 룰 추가/수정: `tactic_classifier.py`의 `_TAG_MITRE`, `_SIGNAL_MITRE` 딕셔너리 편집.
 
+## 폐쇄망 패키징 및 배포
+
+### 구성 파일
+
+```
+docker/
+├── Dockerfile.base          # UV venv + 모든 의존성 사전 설치, src 미포함
+├── Dockerfile.prod          # FROM base + COPY src/ config/ (운영 이미지)
+└── docker-compose.dev.yml   # 폐쇄망 개발용 — src를 volume mount
+scripts/
+└── package-airgap.sh        # 베이스 이미지 빌드 + 번들 생성
+dist/                        # 패키징 출력 (gitignore)
+```
+
+### 이미지 설계 원칙
+
+- **베이스 이미지** (`Dockerfile.base`): UV로 `/opt/venv`에 모든 PyPI 의존성 설치.
+  stub `src/analysis_agent/__init__.py`로 editable install을 완료해 `/app/src`를
+  Python 경로로 등록함 — 이후 실제 src를 mount하거나 COPY해도 패키지 재설치 불필요.
+- **운영 이미지** (`Dockerfile.prod`): `FROM base` + `COPY src/ config/` 만으로 완성.
+- **개발 모드** (`docker-compose.dev.yml`): `./src:/app/src:ro` 마운트 — 코드 변경 시 이미지 재빌드 없음.
+
+### 패키징 (인터넷 연결 환경에서 실행)
+
+```bash
+# 베이스 이미지 빌드 + dist/projanal-airgap-YYYYMMDD-HASH.tar.gz 생성
+bash scripts/package-airgap.sh
+
+# 이미지 빌드 생략 (이미 빌드된 경우)
+bash scripts/package-airgap.sh --no-build
+```
+
+번들 내용:
+
+```
+projanal-airgap-YYYYMMDD-HASH/
+├── images/analysis-agent-base-VERSION-HASH.tar   # docker save 결과
+├── src/                  # 소스코드
+├── config/               # vocabulary YAML
+├── docker/               # Dockerfile.base, Dockerfile.prod, docker-compose.dev.yml
+├── pyproject.toml
+├── .env.example
+└── README-airgap.md      # 폐쇄망 적재·실행 절차
+```
+
+### 폐쇄망 환경 사용
+
+```bash
+# 1. 이미지 적재
+docker load -i images/analysis-agent-base-VERSION-HASH.tar
+
+# 2. 환경 설정 (.env)
+cp .env.example .env
+# ANALYSIS_EMBED_MODEL 반드시 설정 — 미설정 시 chromadb가 인터넷에서 모델 다운로드 시도
+# ANALYSIS_EMBED_MODEL=nomic-embed-text  (Ollama에 pull 된 임베딩 모델)
+
+# 3a. 개발/테스트 (volume mount)
+docker compose -f docker/docker-compose.dev.yml up api
+
+# 3b. 운영 이미지 빌드 (src 내장)
+docker build -f docker/Dockerfile.prod \
+  --build-arg BASE_IMAGE=analysis-agent-base:VERSION-HASH \
+  -t analysis-agent:VERSION .
+```
+
+### 폐쇄망 주의사항
+
+- `ANALYSIS_EMBED_MODEL`을 **반드시** Ollama 모델로 설정 (예: `nomic-embed-text`).
+  미설정 시 chromadb가 HuggingFace에서 `all-MiniLM-L6-v2`를 다운로드하려 해 실패함.
+- Ollama LLM 및 임베딩 모델은 폐쇄망 Ollama 서버에 별도로 적재 필요.
+- `dist/` 디렉토리는 `.gitignore`에 추가 권장.
+
 ## 배포 (사이드카 패턴)
 
 기존 서비스 파드와 동일한 볼륨을 공유해 로컬 파일시스템으로 분석:

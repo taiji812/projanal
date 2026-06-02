@@ -1,0 +1,45 @@
+# ── Air-gapped dev environment ─────────────────────────────────────────────────
+# Mounts local src/ and config/ into the base image — no rebuild needed on code changes.
+#
+# Prerequisites:
+#   1. Load base image:  docker load -i images/analysis-agent-base-VERSION.tar
+#   2. Configure env:    cp .env.example .env  # then edit
+#      ANALYSIS_EMBED_MODEL must point to an Ollama model (no internet access).
+#
+# Usage:
+#   docker compose -f docker/docker-compose.dev.yml up api
+#   docker compose -f docker/docker-compose.dev.yml run --rm cli \
+#     /workspace --id <id> --output /out/<id>.json
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  api:
+    image: analysis-agent-base:latest
+    command: ["python", "-m", "analysis_agent.api.routes"]
+    ports:
+      - "8080:8080"
+    env_file: ../.env
+    volumes:
+      - ../src:/app/src:ro
+      - ../config:/app/config:ro
+      - chroma-model-cache:/root/.cache/chroma
+      - ${OUTPUT_PATH:-../out}:/out
+      - ${WORKSPACE_PATH:-/tmp/workspace}:/workspace:ro
+    restart: unless-stopped
+
+  cli:
+    image: analysis-agent-base:latest
+    entrypoint: ["analyze"]
+    env_file: ../.env
+    volumes:
+      - ../src:/app/src:ro
+      - ../config:/app/config:ro
+      - chroma-model-cache:/root/.cache/chroma
+      - ${WORKSPACE_PATH:-/tmp/workspace}:/workspace:ro
+      - ${OUTPUT_PATH:-../out}:/out
+    profiles:
+      - cli
+
+volumes:
+  chroma-model-cache:
