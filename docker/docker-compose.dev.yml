@@ -6,10 +6,18 @@
 #   2. Configure env:    cp .env.example .env  # then edit
 #      ANALYSIS_EMBED_MODEL must point to an Ollama model (no internet access).
 #
-# Usage:
-#   docker compose -f docker/docker-compose.dev.yml up api
-#   docker compose -f docker/docker-compose.dev.yml run --rm cli \
+# Usage — 반드시 프로젝트 루트에서 --project-directory . 로 실행:
+#   cd /path/to/bundle-root
+#   docker compose --project-directory . -f docker/docker-compose.dev.yml up api
+#
+#   docker compose --project-directory . -f docker/docker-compose.dev.yml run --rm cli \
 #     /workspace --id <id> --output /out/<id>.json
+#
+# 주의: --project-directory . 는 세 가지를 동시에 결정함:
+#   1) env_file 경로 기준 → ./  (= 번들 루트)
+#   2) volumes 상대경로 기준 → ./  (= 번들 루트)
+#   3) ${VAR} 치환용 .env 위치 → ./  (= 번들 루트)
+#   compose 파일이 docker/ 하위에 있으므로 이 옵션 없이 실행하면 경로가 모두 어긋남.
 # ──────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -19,25 +27,25 @@ services:
     command: ["python", "-m", "analysis_agent.api.routes"]
     ports:
       - "8080:8080"
-    env_file: ../.env
+    env_file: .env
     volumes:
-      - ../src:/app/src:ro
-      - ../config:/app/config:ro
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
       - chroma-model-cache:/root/.cache/chroma
-      - ${OUTPUT_PATH:-../out}:/out
+      - ${OUTPUT_PATH:-./out}:/out
       - ${WORKSPACE_PATH:-/tmp/workspace}:/workspace:ro
     restart: unless-stopped
 
   cli:
     image: analysis-agent-base:latest
     entrypoint: ["analyze"]
-    env_file: ../.env
+    env_file: .env
     volumes:
-      - ../src:/app/src:ro
-      - ../config:/app/config:ro
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
       - chroma-model-cache:/root/.cache/chroma
       - ${WORKSPACE_PATH:-/tmp/workspace}:/workspace:ro
-      - ${OUTPUT_PATH:-../out}:/out
+      - ${OUTPUT_PATH:-./out}:/out
     profiles:
       - cli
 
