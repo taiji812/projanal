@@ -41,17 +41,11 @@ def _make_embedding_function():
     model = os.getenv("ANALYSIS_EMBED_MODEL", "").strip()
     if model:
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-
-        class _OllamaEF:
-            """Wraps OllamaEmbeddings to satisfy ChromaDB's EmbeddingFunction protocol."""
-            def __init__(self):
-                from langchain_ollama import OllamaEmbeddings
-                self._emb = OllamaEmbeddings(model=model, base_url=base_url)
-
-            def __call__(self, input: list[str]) -> list[list[float]]:
-                return self._emb.embed_documents(input)
-
-        return _OllamaEF()
+        from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+        return OllamaEmbeddingFunction(
+            model_name=model,
+            url=f"{base_url}/api/embeddings",
+        )
 
     # Default: sentence-transformers/all-MiniLM-L6-v2 (auto-downloaded)
     return DefaultEmbeddingFunction()
@@ -72,7 +66,7 @@ def create_project_collection(project_id: str) -> chromadb.Collection:
         pass
 
     ef = _make_embedding_function()
-    collection = client.create_collection(name, embedding_function=ef)
+    collection = client.get_or_create_collection(name, embedding_function=ef)
     _collections[project_id] = collection
     return collection
 
